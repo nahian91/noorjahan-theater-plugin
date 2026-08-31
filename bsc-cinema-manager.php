@@ -899,11 +899,20 @@ function bsc_api_book_ticket($request) {
 }
 
 /* ==========================================================================
-   05. CUSTOM LOGIN URL REDIRECTION GATEWAY
+   05. CUSTOM LOGIN URL REDIRECTION GATEWAY (FRONTEND ONLY)
    ========================================================================== */
 add_filter('login_url', 'bsc_redirect_to_custom_login', 10, 3);
 function bsc_redirect_to_custom_login($login_url, $redirect, $force_reauth) {
-    // Point the default WordPress login URL to your custom portal page
+    // Do not redirect if we are trying to access the backend wp-admin dashboard
+    if (is_admin() || strpos($_SERVER['REQUEST_URI'], 'wp-login.php') !== false) {
+        // If it's a direct backend login attempt, return the standard login URL
+        // unless a specific frontend redirect is requested
+        if (empty($redirect) && !isset($_GET['reauth'])) {
+            return $login_url;
+        }
+    }
+
+    // Point frontend login requests to your custom portal page
     $custom_login = home_url('/login/');
 
     if (!empty($redirect)) {
