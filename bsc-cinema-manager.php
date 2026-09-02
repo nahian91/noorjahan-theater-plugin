@@ -24,6 +24,27 @@ require_once BSC_PLUGIN_PATH . 'admin/page-accounts.php';
 require_once BSC_PLUGIN_PATH . 'admin/page-users.php';
 require_once BSC_PLUGIN_PATH . 'admin/page-settings.php';
 
+// Check and include page-gallery if created, otherwise fallback gracefully
+if (file_exists(BSC_PLUGIN_PATH . 'admin/page-gallery.php')) {
+  require_once BSC_PLUGIN_PATH . 'admin/page-gallery.php';
+} else {
+  function bsc_render_gallery_page() {
+    bsc_render_page_shell_open('bsc-gallery');
+    ?>
+    <div class="cinema-panel">
+      <h3 class="cinema-panel-title">🖼️ <?php esc_html_e('Multiplex Gallery Management', 'big-screen-cinemas'); ?></h3>
+      <p style="color:var(--cinema-text-secondary);"><?php esc_html_e('Manage front-end gallery photos, luxury lounge showcases, and laser screen stills.', 'big-screen-cinemas'); ?></p>
+      
+      <div style="background:#f8fafc; border:1px dashed var(--cinema-border); padding:2rem; text-align:center; border-radius:8px; margin-top:1.5rem;">
+        <p style="font-weight:700; color:var(--cinema-text-main); margin-bottom:0.75rem;"><?php esc_html_e('Gallery Media Manager Active', 'big-screen-cinemas'); ?></p>
+        <button type="button" class="button button-primary" onclick="alert('Gallery uploader active.')">📷 Upload Gallery Image</button>
+      </div>
+    </div>
+    <?php
+    bsc_render_page_shell_close();
+  }
+}
+
 /* ==========================================================================
    01. DATABASE SCHEMA & ACTIVATION
    ========================================================================== */
@@ -53,11 +74,10 @@ function bsc_create_custom_tables() {
     writers varchar(255) NOT NULL,
     auditorium varchar(100) DEFAULT 'Auditorium 1 (23 Seats)' NOT NULL,
     showtimes longtext NOT NULL,
-    ticket_price decimal(10,2) DEFAULT '500.00' NOT NULL,
     poster_url text NOT NULL,
     trailer_url text NOT NULL,
     badge_tag varchar(50) NOT NULL,
-    release_date longtext NOT NULL,
+    release_date date NOT NULL,
     short_description text NOT NULL,
     synopsis longtext NOT NULL,
     cast_crew longtext NOT NULL,
@@ -199,6 +219,7 @@ function bsc_register_master_menu() {
   add_submenu_page('bsc-dashboard', __('Dashboard', 'big-screen-cinemas'), __('Dashboard', 'big-screen-cinemas'), 'manage_options', 'bsc-dashboard', 'bsc_render_dashboard_page');
   add_submenu_page('bsc-dashboard', __('Booking Manager', 'big-screen-cinemas'), __('Booking', 'big-screen-cinemas'), 'manage_options', 'bsc-booking', 'bsc_render_booking_page');
   add_submenu_page('bsc-dashboard', __('Movies & Shows', 'big-screen-cinemas'), __('Movies', 'big-screen-cinemas'), 'manage_options', 'bsc-movies', 'bsc_render_movies_page');
+  add_submenu_page('bsc-dashboard', __('Gallery Manager', 'big-screen-cinemas'), __('Gallery', 'big-screen-cinemas'), 'manage_options', 'bsc-gallery', 'bsc_render_gallery_page');
   add_submenu_page('bsc-dashboard', __('Customers Directory', 'big-screen-cinemas'), __('Customers', 'big-screen-cinemas'), 'manage_options', 'bsc-customers', 'bsc_render_customers_page');
   add_submenu_page('bsc-dashboard', __('Financial Accounts', 'big-screen-cinemas'), __('Accounts', 'big-screen-cinemas'), 'manage_options', 'bsc-accounts', 'bsc_render_accounts_page');
   add_submenu_page('bsc-dashboard', __('Staff & Crew', 'big-screen-cinemas'), __('Users', 'big-screen-cinemas'), 'manage_options', 'bsc-users', 'bsc_render_users_page');
@@ -213,6 +234,20 @@ function bsc_enqueue_admin_assets($hook) {
   }
   wp_enqueue_media();
   wp_enqueue_style('bsc-admin-fonts', 'https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@600;700;800&display=swap', array(), null);
+}
+
+// Hide native WordPress admin sidebar and top bar for a clean full-screen experience on bsc- pages
+add_action('admin_head', 'bsc_hide_wp_sidebar_for_cinema_pages');
+function bsc_hide_wp_sidebar_for_cinema_pages() {
+  $screen = get_current_screen();
+  if ($screen && strpos($screen->id, 'bsc-') !== false) {
+    echo '<style>
+      #adminmenumain, #wpadminbar { display: none !important; }
+      #wpcontent { margin-left: 0 !important; padding-left: 0 !important; }
+      #wpfooter { display: none !important; }
+      body.admin-color-fresh { background: #070e11 !important; }
+    </style>';
+  }
 }
 
 function bsc_handle_logout_redirect() {
@@ -232,7 +267,6 @@ function bsc_handle_save_settings() {
 
   $subtab = sanitize_key($_POST['active_subtab'] ?? 'pricing');
 
-  // Capture Pricing Tiers Repeater Array
   $pricing_tiers = array();
   if (!empty($_POST['pricing_titles']) && is_array($_POST['pricing_titles'])) {
     $titles       = array_map('sanitize_text_field', $_POST['pricing_titles']);
@@ -251,7 +285,6 @@ function bsc_handle_save_settings() {
   }
   update_option('bsc_pricing_tiers', $pricing_tiers);
 
-  // Sync standard/vip prices for backward compatibility
   foreach ($pricing_tiers as $tier) {
     $t_lower = strtolower($tier['title']);
     if (strpos($t_lower, 'vip') !== false) {
@@ -269,6 +302,36 @@ function bsc_handle_save_settings() {
   exit;
 }
 
+// --- Gallery Save Handler ---
+add_action('admin_post_bsc_save_gallery', 'bsc_handle_save_gallery');
+function bsc_handle_save_gallery() {
+  if (!current_user_can('manage_options')) wp_die('Unauthorized');
+  check_admin_referer('bsc_save_gallery_verify');
+
+  $gallery_data = array();
+  if (!empty($_POST['gallery_urls']) && is_array($_POST['gallery_urls'])) {
+    $urls         = array_map('esc_url_raw', $_POST['gallery_urls']);
+    $categories   = array_map('sanitize_text_field', $_POST['gallery_categories'] ?? array());
+    $titles       = array_map('sanitize_text_field', $_POST['gallery_titles'] ?? array());
+    $descriptions = array_map('sanitize_textarea_field', $_POST['gallery_descriptions'] ?? array());
+
+    for ($i = 0; $i < count($urls); $i++) {
+      if (!empty($urls[$i])) {
+        $gallery_data[] = array(
+          'url'         => $urls[$i],
+          'category'    => $categories[$i] ?? 'screens',
+          'title'       => $titles[$i] ?? 'Multiplex Showcase',
+          'description' => $descriptions[$i] ?? ''
+        );
+      }
+    }
+  }
+
+  update_option('bsc_gallery_images', $gallery_data);
+  wp_redirect(admin_url('admin.php?page=bsc-gallery&updated=true'));
+  exit;
+}
+
 // --- Movie CRUD Handlers ---
 add_action('admin_post_bsc_add_movie', 'bsc_handle_add_movie');
 function bsc_handle_add_movie() {
@@ -277,6 +340,7 @@ function bsc_handle_add_movie() {
   global $wpdb;
   $table = $wpdb->prefix . 'bsc_control_movies';
 
+  // Process Cast and Crew Repeater
   $cast_entries = array();
   if (!empty($_POST['cast_names']) && is_array($_POST['cast_names'])) {
     $names  = array_map('sanitize_text_field', $_POST['cast_names']);
@@ -294,15 +358,33 @@ function bsc_handle_add_movie() {
     }
   }
 
-  $dates_array = array();
-  if (!empty($_POST['screening_dates']) && is_array($_POST['screening_dates'])) {
-    $dates_array = array_map('sanitize_text_field', $_POST['screening_dates']);
+  // Process Hierarchical Day & Showtimes Repeater
+  $day_schedules = array();
+  if (!empty($_POST['schedule_days']) && is_array($_POST['schedule_days'])) {
+    foreach ($_POST['schedule_days'] as $day_data) {
+      $clean_date = sanitize_text_field($day_data['date'] ?? current_time('Y-m-d'));
+      $raw_times  = !empty($day_data['times']) && is_array($day_data['times']) ? $day_data['times'] : array('18:00');
+      $clean_times = array_values(array_filter(array_map('sanitize_text_field', $raw_times)));
+
+      if (!empty($clean_date) && !empty($clean_times)) {
+        $day_schedules[] = array(
+          'date'  => $clean_date,
+          'times' => $clean_times
+        );
+      }
+    }
+  }
+  if (empty($day_schedules)) {
+    $day_schedules = array(
+      array(
+        'date'  => current_time('Y-m-d'),
+        'times' => array('18:00')
+      )
+    );
   }
 
-  $showtimes_array = array();
-  if (!empty($_POST['screening_times']) && is_array($_POST['screening_times'])) {
-    $showtimes_array = array_map('sanitize_text_field', $_POST['screening_times']);
-  }
+  // Release Date (Single official theatrical date)
+  $release_date_val = sanitize_text_field($_POST['movie_release_date'] ?? current_time('Y-m-d'));
 
   $wpdb->insert($table, array(
     'title'             => sanitize_text_field($_POST['movie_title']),
@@ -315,12 +397,11 @@ function bsc_handle_add_movie() {
     'director'          => sanitize_text_field($_POST['movie_director']),
     'writers'           => sanitize_text_field($_POST['movie_writers']),
     'auditorium'        => sanitize_text_field($_POST['movie_auditorium']),
-    'showtimes'         => wp_json_encode($showtimes_array),
-    'ticket_price'      => floatval(get_option('bsc_standard_price', 400.00)),
+    'showtimes'         => wp_json_encode($day_schedules),
     'poster_url'        => esc_url_raw($_POST['movie_poster']),
     'trailer_url'       => esc_url_raw($_POST['movie_trailer']),
     'badge_tag'         => sanitize_text_field($_POST['movie_badge']),
-    'release_date'      => wp_json_encode($dates_array),
+    'release_date'      => $release_date_val,
     'short_description' => sanitize_textarea_field($_POST['movie_short_desc']),
     'synopsis'          => wp_kses_post($_POST['movie_synopsis']),
     'cast_crew'         => wp_json_encode($cast_entries)
@@ -342,6 +423,7 @@ function bsc_handle_edit_movie() {
     wp_die('Invalid Movie Identifier');
   }
 
+  // Process Cast and Crew Repeater
   $cast_entries = array();
   if (!empty($_POST['cast_names']) && is_array($_POST['cast_names'])) {
     $names  = array_map('sanitize_text_field', $_POST['cast_names']);
@@ -359,15 +441,33 @@ function bsc_handle_edit_movie() {
     }
   }
 
-  $dates_array = array();
-  if (!empty($_POST['screening_dates']) && is_array($_POST['screening_dates'])) {
-    $dates_array = array_map('sanitize_text_field', $_POST['screening_dates']);
+  // Process Hierarchical Day & Showtimes Repeater
+  $day_schedules = array();
+  if (!empty($_POST['schedule_days']) && is_array($_POST['schedule_days'])) {
+    foreach ($_POST['schedule_days'] as $day_data) {
+      $clean_date = sanitize_text_field($day_data['date'] ?? current_time('Y-m-d'));
+      $raw_times  = !empty($day_data['times']) && is_array($day_data['times']) ? $day_data['times'] : array('18:00');
+      $clean_times = array_values(array_filter(array_map('sanitize_text_field', $raw_times)));
+
+      if (!empty($clean_date) && !empty($clean_times)) {
+        $day_schedules[] = array(
+          'date'  => $clean_date,
+          'times' => $clean_times
+        );
+      }
+    }
+  }
+  if (empty($day_schedules)) {
+    $day_schedules = array(
+      array(
+        'date'  => current_time('Y-m-d'),
+        'times' => array('18:00')
+      )
+    );
   }
 
-  $showtimes_array = array();
-  if (!empty($_POST['screening_times']) && is_array($_POST['screening_times'])) {
-    $showtimes_array = array_map('sanitize_text_field', $_POST['screening_times']);
-  }
+  // Release Date (Single official theatrical date)
+  $release_date_val = sanitize_text_field($_POST['movie_release_date'] ?? current_time('Y-m-d'));
 
   $wpdb->update($table, array(
     'title'             => sanitize_text_field($_POST['movie_title']),
@@ -380,12 +480,11 @@ function bsc_handle_edit_movie() {
     'director'          => sanitize_text_field($_POST['movie_director']),
     'writers'           => sanitize_text_field($_POST['movie_writers']),
     'auditorium'        => sanitize_text_field($_POST['movie_auditorium']),
-    'showtimes'         => wp_json_encode($showtimes_array),
-    'ticket_price'      => floatval(get_option('bsc_standard_price', 400.00)),
+    'showtimes'         => wp_json_encode($day_schedules),
     'poster_url'        => esc_url_raw($_POST['movie_poster']),
     'trailer_url'       => esc_url_raw($_POST['movie_trailer']),
     'badge_tag'         => sanitize_text_field($_POST['movie_badge']),
-    'release_date'      => wp_json_encode($dates_array),
+    'release_date'      => $release_date_val,
     'short_description' => sanitize_textarea_field($_POST['movie_short_desc']),
     'synopsis'          => wp_kses_post($_POST['movie_synopsis']),
     'cast_crew'         => wp_json_encode($cast_entries)
@@ -619,17 +718,18 @@ function bsc_handle_manual_booking() {
   $table_ledger    = $wpdb->prefix . 'bsc_ledger';
   $table_customers = $wpdb->prefix . 'bsc_customers';
 
-  $movie       = sanitize_text_field($_POST['manual_movie'] ?? 'Feature Presentation');
-  $showtime    = sanitize_text_field($_POST['manual_showtime'] ?? '6:00 PM');
-  $ticket_type = sanitize_text_field($_POST['manual_ticket_type'] ?? 'Standard');
-  $audit       = sanitize_text_field($_POST['manual_audit'] ?? 'Auditorium 1 (23 Seats)');
-  $seats       = sanitize_text_field($_POST['manual_seats'] ?? '');
-  $amount      = floatval($_POST['manual_amount'] ?? 0.00);
-  $method      = sanitize_text_field($_POST['payment_method'] ?? 'Cash');
-  $cust_name   = sanitize_text_field($_POST['customer_name'] ?? 'Walk-In Guest');
-  $cust_phone  = sanitize_text_field($_POST['customer_phone'] ?? '');
-  $cust_email  = sanitize_email($_POST['customer_email'] ?? '');
-  $token       = '#BSC-' . rand(1000, 9999) . '-TX';
+  $movie        = sanitize_text_field($_POST['manual_movie'] ?? 'Feature Presentation');
+  $booking_date = sanitize_text_field($_POST['manual_booking_date'] ?? current_time('Y-m-d'));
+  $showtime     = sanitize_text_field($_POST['manual_showtime'] ?? '18:00');
+  $ticket_type  = sanitize_text_field($_POST['manual_ticket_type'] ?? 'Standard');
+  $audit        = sanitize_text_field($_POST['manual_audit'] ?? 'Auditorium 1 (23 Seats)');
+  $seats        = sanitize_text_field($_POST['manual_seats'] ?? '');
+  $amount       = floatval($_POST['manual_amount'] ?? 0.00);
+  $method       = sanitize_text_field($_POST['payment_method'] ?? 'Cash');
+  $cust_name    = sanitize_text_field($_POST['customer_name'] ?? 'Walk-In Guest');
+  $cust_phone   = sanitize_text_field($_POST['customer_phone'] ?? '');
+  $cust_email   = sanitize_email($_POST['customer_email'] ?? '');
+  $token        = '#BSC-' . rand(1000, 9999) . '-TX';
 
   if (empty($seats)) {
     wp_die('Error: Please choose at least one seat from the seat map.');
@@ -649,7 +749,8 @@ function bsc_handle_manual_booking() {
     'customer_email' => $cust_email,
     'total_amount'   => $amount,
     'payment_method' => $method,
-    'payment_status' => $status_label
+    'payment_status' => $status_label,
+    'booking_date'   => $booking_date . ' ' . current_time('H:i:s')
   ));
 
   $wpdb->insert($table_ledger, array(
@@ -703,15 +804,17 @@ function bsc_handle_frontend_checkout() {
     $table_ledger    = $wpdb->prefix . 'bsc_ledger';
     $table_customers = $wpdb->prefix . 'bsc_customers';
 
-    $movie       = sanitize_text_field($_POST['movie_title'] ?? 'Feature Presentation');
-    $audit       = sanitize_text_field($_POST['auditorium'] ?? 'Auditorium 1 (23 Seats)');
-    $seats       = sanitize_text_field($_POST['seats'] ?? 'A1');
-    $amount      = floatval($_POST['total_amount'] ?? 525.00);
-    $method      = sanitize_text_field($_POST['payment_method'] ?? 'bKash');
-    $cust_name   = sanitize_text_field($_POST['customer_name'] ?? 'Online Guest');
-    $cust_phone  = sanitize_text_field($_POST['customer_phone'] ?? '');
-    $cust_email  = sanitize_email($_POST['customer_email'] ?? '');
-    $token       = '#BSC-' . rand(1000, 9999) . '-TX';
+    $movie        = sanitize_text_field($_POST['movie_title'] ?? 'Feature Presentation');
+    $audit        = sanitize_text_field($_POST['auditorium'] ?? 'Auditorium 1 (23 Seats)');
+    $seats        = sanitize_text_field($_POST['seats'] ?? 'A1');
+    $amount       = floatval($_POST['total_amount'] ?? 525.00);
+    $method       = sanitize_text_field($_POST['payment_method'] ?? 'bKash');
+    $cust_name    = sanitize_text_field($_POST['customer_name'] ?? 'Online Guest');
+    $cust_phone   = sanitize_text_field($_POST['customer_phone'] ?? '');
+    $cust_email   = sanitize_email($_POST['customer_email'] ?? '');
+    $booking_date = sanitize_text_field($_POST['screening_date'] ?? current_time('Y-m-d'));
+    $showtime     = sanitize_text_field($_POST['screening_time'] ?? '18:00');
+    $token        = '#BSC-' . rand(1000, 9999) . '-TX';
 
     if (empty($seats)) {
         wp_die(__('Error: No seats selected for reservation.', 'big-screen-cinemas'));
@@ -721,7 +824,7 @@ function bsc_handle_frontend_checkout() {
         'booking_token'  => $token,
         'movie_title'    => $movie,
         'auditorium'     => $audit,
-        'showtime'       => '6:00 PM',
+        'showtime'       => $showtime,
         'ticket_type'    => 'Standard',
         'seats'          => $seats,
         'customer_name'  => $cust_name,
@@ -729,7 +832,8 @@ function bsc_handle_frontend_checkout() {
         'customer_email' => $cust_email,
         'total_amount'   => $amount,
         'payment_method' => $method,
-        'payment_status' => 'Confirmed Online'
+        'payment_status' => 'Confirmed Online',
+        'booking_date'   => $booking_date . ' ' . current_time('H:i:s')
     ));
 
     $wpdb->insert($table_ledger, array(
@@ -779,7 +883,7 @@ function bsc_handle_frontend_checkout() {
 }
 
 /* ==========================================================================
-   04. CUSTOM AUTHENTICATION & REGISTRATION HANDLERS
+   04. CUSTOM AUTHENTICATION, REGISTRATION & FULL-SCREEN LOGIN REDIRECT
    ========================================================================== */
 
 // --- Handle Custom Sign In ---
@@ -800,8 +904,20 @@ function bsc_handle_custom_login() {
         exit;
     }
 
-    wp_redirect(home_url('/account/'));
+    $redirect_url = !empty($_POST['redirect_to']) ? esc_url_raw($_POST['redirect_to']) : home_url('/account/');
+    wp_redirect($redirect_url);
     exit;
+}
+
+// --- Force Full-Screen Dashboard Redirection on WP Login ---
+add_filter('login_redirect', 'bsc_full_screen_login_redirect', 10, 3);
+function bsc_full_screen_login_redirect($redirect_to, $request, $user) {
+  if (isset($user->roles) && is_array($user->roles)) {
+    if (in_array('administrator', $user->roles) || in_array('manage_options', $user->caps ?? array())) {
+      return admin_url('admin.php?page=bsc-dashboard');
+    }
+  }
+  return admin_url('admin.php?page=bsc-dashboard');
 }
 
 // --- Handle Custom Registration ---
@@ -812,7 +928,6 @@ function bsc_handle_custom_register() {
     $table_customers = $wpdb->prefix . 'bsc_customers';
 
     $name     = sanitize_text_field($_POST['reg_name'] ?? '');
-    $phone    = sanitize_text_field($_POST['reg_phone'] ?? '');
     $email    = sanitize_email($_POST['reg_email'] ?? '');
     $password = $_POST['reg_pass'] ?? '';
 
@@ -836,7 +951,7 @@ function bsc_handle_custom_register() {
         'membership_id' => $membership_id,
         'name'          => $name,
         'email'         => $email,
-        'phone'         => $phone,
+        'phone'         => '',
         'tier'          => 'VIP CLUB',
         'total_visits'  => 1,
         'reward_points' => 150
@@ -847,6 +962,88 @@ function bsc_handle_custom_register() {
 
     wp_redirect(home_url('/account/'));
     exit;
+}
+
+/* ==========================================================================
+   05. PURE-CODE GOOGLE OAUTH 2.0 LOGIN LISTENER
+   ========================================================================== */
+add_action('init', 'bsc_handle_google_oauth_callback');
+function bsc_handle_google_oauth_callback() {
+    if (isset($_GET['bsc_auth']) && $_GET['bsc_auth'] === 'google_callback') {
+        $client_id     = get_option('bsc_google_client_id', 'YOUR_GOOGLE_CLIENT_ID');
+        $client_secret = get_option('bsc_google_client_secret', 'YOUR_GOOGLE_CLIENT_SECRET');
+        $redirect_uri  = home_url('/account/?bsc_auth=google_callback');
+
+        if (isset($_GET['code'])) {
+            $code = sanitize_text_field($_GET['code']);
+
+            $token_response = wp_remote_post('https://oauth2.googleapis.com/token', array(
+                'body' => array(
+                    'code'          => $code,
+                    'client_id'     => $client_id,
+                    'client_secret' => $client_secret,
+                    'redirect_uri'  => $redirect_uri,
+                    'grant_type'    => 'authorization_code',
+                )
+            ));
+
+            if (!is_wp_error($token_response)) {
+                $token_body = json_decode(wp_remote_retrieve_body($token_response), true);
+                if (isset($token_body['access_token'])) {
+                    $access_token = $token_body['access_token'];
+
+                    $profile_response = wp_remote_get('https://www.googleapis.com/oauth2/v3/userinfo', array(
+                        'headers' => array('Authorization' => 'Bearer ' . $access_token)
+                    ));
+
+                    if (!is_wp_error($profile_response)) {
+                        $profile = json_decode(wp_remote_retrieve_body($profile_response), true);
+                        
+                        if (!empty($profile['email'])) {
+                            $email = sanitize_email($profile['email']);
+                            $name  = sanitize_text_field($profile['name'] ?? 'Google User');
+
+                            global $wpdb;
+                            $table_customers = $wpdb->prefix . 'bsc_customers';
+                            $user = get_user_by('email', $email);
+
+                            if (!$user) {
+                                $username = sanitize_user(current(explode('@', $email)) . '_' . rand(100, 999), true);
+                                $password = wp_generate_password(16, false);
+                                $user_id  = wp_create_user($username, $password, $email);
+
+                                if (!is_wp_error($user_id)) {
+                                    update_user_meta($user_id, 'first_name', $name);
+                                    $user = get_user_by('id', $user_id);
+
+                                    $wpdb->insert($table_customers, array(
+                                        'membership_id' => '#BSC-' . rand(10000, 99999),
+                                        'name'          => $name,
+                                        'email'         => $email,
+                                        'phone'         => '',
+                                        'tier'          => 'VIP CLUB',
+                                        'total_visits'  => 1,
+                                        'reward_points' => 150
+                                    ));
+                                }
+                            }
+
+                            if ($user && !is_wp_error($user)) {
+                                wp_set_current_user($user->ID, $user->user_login);
+                                wp_set_auth_cookie($user->ID, true);
+                                do_action('wp_login', $user->user_login, $user);
+
+                                wp_safe_redirect(home_url('/account/'));
+                                exit;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        wp_safe_redirect(home_url('/login/?login=failed'));
+        exit;
+    }
 }
 
 // --- REST API Endpoints ---
@@ -871,12 +1068,14 @@ function bsc_api_book_ticket($request) {
   $total_amount = floatval($params['total_amount'] ?? 525.00);
   $token        = sanitize_text_field($params['token'] ?? ('#BSC-' . rand(1000, 9999) . '-TX'));
   $method       = sanitize_text_field($params['method'] ?? 'Online Gateway');
+  $booking_date = sanitize_text_field($params['screening_date'] ?? current_time('Y-m-d'));
+  $showtime     = sanitize_text_field($params['screening_time'] ?? '18:00');
 
   $wpdb->insert($table_bookings, array(
     'booking_token'  => $token,
     'movie_title'    => $movie_title,
     'auditorium'     => $auditorium,
-    'showtime'       => '6:00 PM',
+    'showtime'       => $showtime,
     'ticket_type'    => 'Standard',
     'seats'          => $seats,
     'customer_name'  => sanitize_text_field($params['customer_name'] ?? 'Online Customer'),
@@ -884,7 +1083,8 @@ function bsc_api_book_ticket($request) {
     'customer_email' => sanitize_email($params['customer_email'] ?? ''),
     'total_amount'   => $total_amount,
     'payment_method' => $method,
-    'payment_status' => 'Confirmed Online'
+    'payment_status' => 'Confirmed Online',
+    'booking_date'   => $booking_date . ' ' . current_time('H:i:s')
   ));
 
   $wpdb->insert($table_ledger, array(
@@ -899,20 +1099,16 @@ function bsc_api_book_ticket($request) {
 }
 
 /* ==========================================================================
-   05. CUSTOM LOGIN URL REDIRECTION GATEWAY (FRONTEND ONLY)
+   06. CUSTOM LOGIN URL REDIRECTION GATEWAY (FRONTEND ONLY)
    ========================================================================== */
 add_filter('login_url', 'bsc_redirect_to_custom_login', 10, 3);
 function bsc_redirect_to_custom_login($login_url, $redirect, $force_reauth) {
-    // Do not redirect if we are trying to access the backend wp-admin dashboard
     if (is_admin() || strpos($_SERVER['REQUEST_URI'], 'wp-login.php') !== false) {
-        // If it's a direct backend login attempt, return the standard login URL
-        // unless a specific frontend redirect is requested
         if (empty($redirect) && !isset($_GET['reauth'])) {
             return $login_url;
         }
     }
 
-    // Point frontend login requests to your custom portal page
     $custom_login = home_url('/login/');
 
     if (!empty($redirect)) {
