@@ -115,14 +115,10 @@ $total_hall_capacity = 23; // Boutique 23-seat matrix capacity per screening
     <div>
       <h3 class="cinema-panel-title" style="margin:0 0 4px 0; font-size:1.15rem; font-weight:800; color:#0f172a;">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" style="vertical-align:-3px; margin-right:4px;"><path d="M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4h-4z"/></svg>
-        <?php esc_html_e( 'All Feature Movies', 'bsc-cinema-manager' ); ?> (<span id="filteredMovieCount"><?php echo count( $movies ); ?></span>)
+        <?php esc_html_e( 'All Feature Movies', 'bcs-screen-manager' ); ?> (<span id="filteredMovieCount"><?php echo count( $movies ); ?></span>)
       </h3>
-      <span style="font-size:0.78rem; color:var(--cinema-text-muted, #64748b);"><?php esc_html_e( 'Manage multiplex film catalog, official publish dates, and today\'s live seat availability.', 'bsc-cinema-manager' ); ?></span>
+      <span style="font-size:0.78rem; color:var(--cinema-text-muted, #64748b);"><?php esc_html_e( 'Manage multiplex film catalog, official publish dates, and today\'s live seat availability.', 'bcs-screen-manager' ); ?></span>
     </div>
-    <a href="<?php echo esc_url( admin_url( 'admin.php?page=bsc-movies&subtab=add' ) ); ?>" class="button button-primary" style="background:#064e3b; border-color:#064e3b; font-weight:800; display:inline-flex; align-items:center; gap:6px;">
-      <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-      <?php esc_html_e( 'Add New Movie', 'bsc-cinema-manager' ); ?>
-    </a>
   </div>
 
   <!-- Live Filter Toolbar -->
@@ -217,34 +213,34 @@ $total_hall_capacity = 23; // Boutique 23-seat matrix capacity per screening
                     <span class="bsc-showtime-chip">
                       <span><?php echo esc_html( $show['time'] ); ?></span>
                       <span class="seats-left <?php echo $is_sold_out ? 'sold-out' : ''; ?>">
-                        <?php echo $is_sold_out ? esc_html__( 'Sold Out', 'bsc-cinema-manager' ) : esc_html( $show['remaining'] . ' seats left' ); ?>
+                        <?php echo $is_sold_out ? esc_html__( 'Sold Out', 'bcs-screen-manager' ) : esc_html( $show['remaining'] . ' seats left' ); ?>
                       </span>
                     </span>
                   <?php endforeach; ?>
                 </div>
               <?php else : ?>
-                <span style="color:var(--cinema-text-muted, #64748b); font-size:0.75rem; font-style:italic;"><?php esc_html_e( 'No shows today', 'bsc-cinema-manager' ); ?></span>
+                <span style="color:var(--cinema-text-muted, #64748b); font-size:0.75rem; font-style:italic;"><?php esc_html_e( 'No shows today', 'bcs-screen-manager' ); ?></span>
               <?php endif; ?>
             </td>
             <td style="padding:12px; text-align:right; white-space:nowrap;">
               <div class="bsc-table-actions">
-                <a href="<?php echo esc_url( $view_admin_url ); ?>" class="bsc-action-btn view" title="<?php esc_attr_e( 'View', 'bsc-cinema-manager' ); ?>">
+                <a href="<?php echo esc_url( $view_admin_url ); ?>" class="bsc-action-btn view" title="<?php esc_attr_e( 'View', 'bcs-screen-manager' ); ?>">
                   <svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
-                  <span><?php esc_html_e( 'View', 'bsc-cinema-manager' ); ?></span>
+                  <span><?php esc_html_e( 'View', 'bcs-screen-manager' ); ?></span>
                 </a>
-                <a href="<?php echo esc_url( $edit_url ); ?>" class="bsc-action-btn edit" title="<?php esc_attr_e( 'Edit', 'bsc-cinema-manager' ); ?>">
+                <a href="<?php echo esc_url( $edit_url ); ?>" class="bsc-action-btn edit" title="<?php esc_attr_e( 'Edit', 'bcs-screen-manager' ); ?>">
                   <svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
-                  <span><?php esc_html_e( 'Edit', 'bsc-cinema-manager' ); ?></span>
+                  <span><?php esc_html_e( 'Edit', 'bcs-screen-manager' ); ?></span>
                 </a>
-                <a href="<?php echo esc_url( $delete_url ); ?>" class="bsc-action-btn delete" onclick="return confirm('<?php echo esc_js( __( 'Are you sure you want to permanently delete this movie from the database?', 'bsc-cinema-manager' ) ); ?>');" title="<?php esc_attr_e( 'Delete', 'bsc-cinema-manager' ); ?>">
+                <a href="<?php echo esc_url( $delete_url ); ?>" class="bsc-action-btn delete" onclick="return confirm('<?php echo esc_js( __( 'Are you sure you want to permanently delete this movie from the database?', 'bcs-screen-manager' ) ); ?>');" title="<?php esc_attr_e( 'Delete', 'bcs-screen-manager' ); ?>">
                   <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-                  <span><?php esc_html_e( 'Delete', 'bsc-cinema-manager' ); ?></span>
+                  <span><?php esc_html_e( 'Delete', 'bcs-screen-manager' ); ?></span>
                 </a>
               </div>
             </td>
           </tr>
         <?php endforeach; else : ?>
-          <tr id="noMoviesRow"><td colspan="5" style="text-align:center; padding:2.5rem; color:var(--cinema-text-muted, #64748b);"><?php esc_html_e( 'No movies published in the catalog.', 'bsc-cinema-manager' ); ?></td></tr>
+          <tr id="noMoviesRow"><td colspan="5" style="text-align:center; padding:2.5rem; color:var(--cinema-text-muted, #64748b);"><?php esc_html_e( 'No movies published in the catalog.', 'bcs-screen-manager' ); ?></td></tr>
         <?php endif; ?>
       </tbody>
     </table>

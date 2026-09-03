@@ -10,15 +10,13 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // -------------------------------------------------------------
-// 1. PROCESS FORM SUBMISSIONS ON admin_init (PREVENTS HEADER CONFLICTS)
+// 1. PROCESS FORM SUBMISSIONS DIRECTLY (RELIABLE EXECUTION)
 // -------------------------------------------------------------
-function bsc_handle_movie_form_submissions() {
-    if ( 'POST' !== $_SERVER['REQUEST_METHOD'] || ! isset( $_POST['bsc_action'] ) ) {
-        return;
-    }
+$error_message = '';
 
+if ( 'POST' === $_SERVER['REQUEST_METHOD'] && isset( $_POST['bsc_action'] ) ) {
     if ( ! current_user_can( 'manage_options' ) ) {
-        wp_die( esc_html__( 'Unauthorized access.', 'bsc-cinema-manager' ) );
+        wp_die( esc_html__( 'Unauthorized access.', 'bcs-screen-manager' ) );
     }
 
     global $wpdb;
@@ -42,7 +40,7 @@ function bsc_handle_movie_form_submissions() {
     $synopsis   = sanitize_textarea_field( wp_unslash( $_POST['movie_synopsis'] ?? '' ) );
     $auditorium = sanitize_text_field( wp_unslash( $_POST['movie_auditorium'] ?? 'Auditorium 1 (23 Seats)' ) );
 
-    // Parse and format Schedule Days
+    // Format Schedule Days into clean JSON
     $raw_schedule = $_POST['schedule_days'] ?? array();
     $formatted_schedule = array();
     if ( is_array( $raw_schedule ) ) {
@@ -59,9 +57,8 @@ function bsc_handle_movie_form_submissions() {
         }
     }
     $showtimes_json = wp_json_encode( $formatted_schedule );
-    $release_date_json = wp_json_encode( array( $release_dt ) );
 
-    // Parse Cast & Crew repeater data
+    // Format Cast & Crew repeater data into JSON
     $c_names  = $_POST['cast_names'] ?? array();
     $c_roles  = $_POST['cast_roles'] ?? array();
     $c_photos = $_POST['cast_photos'] ?? array();
@@ -81,32 +78,42 @@ function bsc_handle_movie_form_submissions() {
     $data_payload = array(
         'title'             => $title,
         'category'          => $category,
-        'release_date'      => $release_date_json,
         'genre'             => $genre,
         'duration'          => $duration,
-        'audio_language'    => $audio,
-        'badge_tag'         => $badge,
         'rating'            => $rating,
         'age_rating'        => $age_rating,
+        'audio_language'    => $audio,
         'director'          => $director,
         'writers'           => $writers,
+        'auditorium'        => $auditorium,
+        'showtimes'         => $showtimes_json,
         'poster_url'        => $poster,
         'trailer_url'       => $trailer,
+        'badge_tag'         => $badge,
+        'release_date'      => $release_dt,
         'short_description' => $short_desc,
         'synopsis'          => $synopsis,
-        'showtimes'         => $showtimes_json,
         'cast_crew'         => $cast_json,
-        'auditorium'        => $auditorium,
     );
 
-    $data_formats = array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' );
+    $data_formats = array(
+        '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s',
+        '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s'
+    );
 
     if ( 'add_movie' === $action ) {
         check_admin_referer( 'bsc_add_movie_verify' );
         $inserted = $wpdb->insert( $table, $data_payload, $data_formats );
+
         if ( false !== $inserted ) {
-            wp_safe_redirect( admin_url( 'admin.php?page=bsc-movies&subtab=all&movie_added=true' ) );
+            ?>
+            <script type="text/javascript">
+                window.location.href = <?php echo wp_json_encode( admin_url( 'admin.php?page=bsc-movies&subtab=all&movie_added=true' ) ); ?>;
+            </script>
+            <?php
             exit;
+        } else {
+            $error_message = $wpdb->last_error ? $wpdb->last_error : __( 'Failed to save movie to database.', 'bcs-screen-manager' );
         }
     } elseif ( 'edit_movie' === $action ) {
         check_admin_referer( 'bsc_edit_movie_verify' );
@@ -114,16 +121,21 @@ function bsc_handle_movie_form_submissions() {
         if ( $movie_id > 0 ) {
             $updated = $wpdb->update( $table, $data_payload, array( 'id' => $movie_id ), $data_formats, array( '%d' ) );
             if ( false !== $updated ) {
-                wp_safe_redirect( admin_url( 'admin.php?page=bsc-movies&subtab=all&movie_updated=true' ) );
+                ?>
+                <script type="text/javascript">
+                    window.location.href = <?php echo wp_json_encode( admin_url( 'admin.php?page=bsc-movies&subtab=all&movie_updated=true' ) ); ?>;
+                </script>
+                <?php
                 exit;
+            } else {
+                $error_message = $wpdb->last_error ? $wpdb->last_error : __( 'Failed to update movie.', 'bcs-screen-manager' );
             }
         }
     }
 }
-add_action( 'admin_init', 'bsc_handle_movie_form_submissions' );
 
 // -------------------------------------------------------------
-// 2. UI VIEW RENDERING
+// 2. UI VIEW DATA PREPARATION
 // -------------------------------------------------------------
 global $wpdb;
 $table = $wpdb->prefix . 'bsc_control_movies';
@@ -142,25 +154,12 @@ $cast_list = array();
 if ( $movie && ! empty( $movie->cast_crew ) ) {
     $cast_list = json_decode( $movie->cast_crew, true );
 }
-if ( empty( $cast_list ) ) {
+if ( empty( $cast_list ) || ! is_array( $cast_list ) ) {
     $cast_list = array( array( 'name' => '', 'role' => '', 'photo' => '' ) );
 }
 
-// Parse official movie release date
-$official_release_date = current_time( 'Y-m-d' );
-if ( $movie && ! empty( $movie->release_date ) ) {
-    $decoded_dates = json_decode( $movie->release_date, true );
-    if ( is_array( $decoded_dates ) && ! empty( $decoded_dates ) ) {
-        $official_release_date = reset( $decoded_dates );
-    } else {
-        $parts = array_map( 'trim', explode( ',', $movie->release_date ) );
-        if ( ! empty( $parts[0] ) ) {
-            $official_release_date = $parts[0];
-        }
-    }
-}
+$official_release_date = ( $movie && ! empty( $movie->release_date ) ) ? $movie->release_date : current_time( 'Y-m-d' );
 
-// Parse grouped date schedules with nested times
 $day_schedules = array(
     array(
         'date'  => current_time( 'Y-m-d' ),
@@ -184,13 +183,6 @@ if ( $movie && ! empty( $movie->showtimes ) ) {
                 $grouped[ $d ]['times'][] = $t;
             }
             $day_schedules = array_values( $grouped );
-        } else {
-            $day_schedules = array(
-                array(
-                    'date'  => current_time( 'Y-m-d' ),
-                    'times' => is_array( $decoded_showtimes ) ? $decoded_showtimes : array( '18:00' ),
-                ),
-            );
         }
     }
 }
@@ -325,7 +317,14 @@ if ( $movie && ! empty( $movie->showtimes ) ) {
 </style>
 
 <div style="max-width:920px; margin:20px auto;">
-  <form method="POST" action="<?php echo esc_url( admin_url( 'admin.php?page=bsc-movies' ) ); ?>" id="bscMovieForm">
+
+  <?php if ( ! empty( $error_message ) ) : ?>
+    <div style="background:#fef2f2; border:1px solid #f87171; color:#991b1b; padding:12px 16px; border-radius:8px; margin-bottom:16px; font-size:0.9rem;">
+      <strong><?php esc_html_e( 'Database Error:', 'bcs-screen-manager' ); ?></strong> <?php echo esc_html( $error_message ); ?>
+    </div>
+  <?php endif; ?>
+
+  <form method="POST" action="" id="bscMovieForm">
     <?php 
     if ( $is_edit ) {
         wp_nonce_field( 'bsc_edit_movie_verify' );
@@ -340,68 +339,68 @@ if ( $movie && ! empty( $movie->showtimes ) ) {
 
     <!-- 01. CORE MOVIE INFO -->
     <div class="bsc-form-card">
-      <h4 class="bsc-section-title">🎬 <?php esc_html_e( 'Core Movie Information', 'bsc-cinema-manager' ); ?></h4>
+      <h4 class="bsc-section-title">🎬 <?php esc_html_e( 'Core Movie Information', 'bcs-screen-manager' ); ?></h4>
 
       <div class="bsc-grid-2">
         <div class="bsc-input-group">
-          <label><?php esc_html_e( 'Movie Title', 'bsc-cinema-manager' ); ?> *</label>
+          <label><?php esc_html_e( 'Movie Title', 'bcs-screen-manager' ); ?> *</label>
           <input type="text" name="movie_title" required value="<?php echo esc_attr( $movie->title ?? '' ); ?>" placeholder="e.g. Borbaad">
         </div>
         <div class="bsc-input-group">
-          <label><?php esc_html_e( 'Movie Category', 'bsc-cinema-manager' ); ?> *</label>
+          <label><?php esc_html_e( 'Movie Category', 'bcs-screen-manager' ); ?> *</label>
           <select name="movie_category" required>
             <?php $current_category = $movie->category ?? 'Now Showing'; ?>
-            <option value="Now Showing" <?php selected( $current_category, 'Now Showing' ); ?>><?php esc_html_e( 'Now Showing', 'bsc-cinema-manager' ); ?></option>
-            <option value="Upcoming" <?php selected( $current_category, 'Upcoming' ); ?>><?php esc_html_e( 'Upcoming', 'bsc-cinema-manager' ); ?></option>
-            <option value="Festival Special" <?php selected( $current_category, 'Festival Special' ); ?>><?php esc_html_e( 'Festival Special', 'bsc-cinema-manager' ); ?></option>
+            <option value="Now Showing" <?php selected( $current_category, 'Now Showing' ); ?>><?php esc_html_e( 'Now Showing', 'bcs-screen-manager' ); ?></option>
+            <option value="Upcoming" <?php selected( $current_category, 'Upcoming' ); ?>><?php esc_html_e( 'Upcoming', 'bcs-screen-manager' ); ?></option>
+            <option value="Festival Special" <?php selected( $current_category, 'Festival Special' ); ?>><?php esc_html_e( 'Festival Special', 'bcs-screen-manager' ); ?></option>
           </select>
         </div>
       </div>
 
       <div class="bsc-grid-2">
         <div class="bsc-input-group">
-          <label><?php esc_html_e( 'Official Theatrical Release Date', 'bsc-cinema-manager' ); ?> *</label>
+          <label><?php esc_html_e( 'Official Theatrical Release Date', 'bcs-screen-manager' ); ?> *</label>
           <input type="date" name="movie_release_date" required value="<?php echo esc_attr( $official_release_date ); ?>">
         </div>
         <div class="bsc-input-group">
-          <label><?php esc_html_e( 'Genre', 'bsc-cinema-manager' ); ?> *</label>
+          <label><?php esc_html_e( 'Genre', 'bcs-screen-manager' ); ?> *</label>
           <input type="text" name="movie_genre" required value="<?php echo esc_attr( $movie->genre ?? '' ); ?>" placeholder="e.g. Action / Thriller">
         </div>
       </div>
 
       <div class="bsc-grid-3">
         <div class="bsc-input-group">
-          <label><?php esc_html_e( 'Duration', 'bsc-cinema-manager' ); ?> *</label>
+          <label><?php esc_html_e( 'Duration', 'bcs-screen-manager' ); ?> *</label>
           <input type="text" name="movie_duration" required value="<?php echo esc_attr( $movie->duration ?? '' ); ?>" placeholder="e.g. 02h 25m">
         </div>
         <div class="bsc-input-group">
-          <label><?php esc_html_e( 'Language & Audio', 'bsc-cinema-manager' ); ?> *</label>
+          <label><?php esc_html_e( 'Language & Audio', 'bcs-screen-manager' ); ?> *</label>
           <input type="text" name="movie_audio_lang" required value="<?php echo esc_attr( $movie->audio_language ?? 'Bengali (Dolby Atmos 128-Ch)' ); ?>">
         </div>
         <div class="bsc-input-group">
-          <label><?php esc_html_e( 'Format Badge', 'bsc-cinema-manager' ); ?> *</label>
+          <label><?php esc_html_e( 'Format Badge', 'bcs-screen-manager' ); ?> *</label>
           <input type="text" name="movie_badge" required value="<?php echo esc_attr( $movie->badge_tag ?? '4K DUAL LASER' ); ?>">
         </div>
       </div>
 
       <div class="bsc-grid-3">
         <div class="bsc-input-group">
-          <label><?php esc_html_e( 'Rating (IMDb)', 'bsc-cinema-manager' ); ?> *</label>
+          <label><?php esc_html_e( 'Rating (IMDb)', 'bcs-screen-manager' ); ?> *</label>
           <input type="text" name="movie_rating" required value="<?php echo esc_attr( $movie->rating ?? '9.0' ); ?>">
         </div>
         <div class="bsc-input-group">
-          <label><?php esc_html_e( 'Age / Censor Rating', 'bsc-cinema-manager' ); ?> *</label>
+          <label><?php esc_html_e( 'Age / Censor Rating', 'bcs-screen-manager' ); ?> *</label>
           <input type="text" name="movie_age_rating" required value="<?php echo esc_attr( $movie->age_rating ?? 'R-Rated (18+)' ); ?>">
         </div>
         <div class="bsc-input-group">
-          <label><?php esc_html_e( 'Director', 'bsc-cinema-manager' ); ?> *</label>
+          <label><?php esc_html_e( 'Director', 'bcs-screen-manager' ); ?> *</label>
           <input type="text" name="movie_director" required value="<?php echo esc_attr( $movie->director ?? '' ); ?>" placeholder="e.g. Raihan Rafi">
         </div>
       </div>
 
       <div class="bsc-grid-1">
         <div class="bsc-input-group">
-          <label><?php esc_html_e( 'Screenwriters / Story', 'bsc-cinema-manager' ); ?> *</label>
+          <label><?php esc_html_e( 'Screenwriters / Story', 'bcs-screen-manager' ); ?> *</label>
           <input type="text" name="movie_writers" required value="<?php echo esc_attr( $movie->writers ?? '' ); ?>" placeholder="e.g. Mehedi Hasan">
         </div>
       </div>
@@ -409,37 +408,37 @@ if ( $movie && ! empty( $movie->showtimes ) ) {
 
     <!-- 02. MEDIA & SYNOPSIS -->
     <div class="bsc-form-card">
-      <h4 class="bsc-section-title">🖼️ <?php esc_html_e( 'Media, Synopsis & Storyline', 'bsc-cinema-manager' ); ?></h4>
+      <h4 class="bsc-section-title">🖼️ <?php esc_html_e( 'Media, Synopsis & Storyline', 'bcs-screen-manager' ); ?></h4>
 
       <div class="bsc-grid-2">
         <div class="bsc-input-group">
-          <label><?php esc_html_e( 'Movie Poster', 'bsc-cinema-manager' ); ?> *</label>
+          <label><?php esc_html_e( 'Movie Poster', 'bcs-screen-manager' ); ?> *</label>
           <div style="background:#f8fafc; border:1px dashed #cbd5e1; padding:12px; border-radius:8px; text-align:center;">
             <input type="hidden" name="movie_poster" id="movie_poster_url" required value="<?php echo esc_url( $movie->poster_url ?? '' ); ?>">
             <img id="poster_preview" src="<?php echo esc_url( $movie->poster_url ?? '' ); ?>" style="<?php echo ! empty( $movie->poster_url ) ? 'display:block;' : 'display:none;'; ?> max-height:120px; margin:0 auto 8px auto; border-radius:6px; object-fit:cover;">
-            <button type="button" class="button" id="btn_upload_poster">📷 <?php esc_html_e( 'Choose Poster', 'bsc-cinema-manager' ); ?></button>
-            <button type="button" class="button" id="btn_remove_poster" style="<?php echo ! empty( $movie->poster_url ) ? 'display:inline-block;' : 'display:none;'; ?> color:#ef4444;"><?php esc_html_e( 'Remove', 'bsc-cinema-manager' ); ?></button>
+            <button type="button" class="button" id="btn_upload_poster">📷 <?php esc_html_e( 'Choose Poster', 'bcs-screen-manager' ); ?></button>
+            <button type="button" class="button" id="btn_remove_poster" style="<?php echo ! empty( $movie->poster_url ) ? 'display:inline-block;' : 'display:none;'; ?> color:#ef4444;"><?php esc_html_e( 'Remove', 'bcs-screen-manager' ); ?></button>
           </div>
         </div>
 
         <div class="bsc-input-group">
-          <label><?php esc_html_e( 'Official Trailer Video', 'bsc-cinema-manager' ); ?></label>
+          <label><?php esc_html_e( 'Official Trailer Video', 'bcs-screen-manager' ); ?></label>
           <div style="background:#f8fafc; border:1px dashed #cbd5e1; padding:12px; border-radius:8px; text-align:center;">
             <input type="hidden" name="movie_trailer" id="movie_trailer_url" value="<?php echo esc_url( $movie->trailer_url ?? '' ); ?>">
             <video id="trailer_preview" src="<?php echo esc_url( $movie->trailer_url ?? '' ); ?>" controls style="<?php echo ! empty( $movie->trailer_url ) ? 'display:block;' : 'display:none;'; ?> max-height:120px; width:100%; border-radius:6px; margin-bottom:8px;"></video>
-            <button type="button" class="button" id="btn_upload_trailer">▶️ <?php esc_html_e( 'Choose Trailer', 'bsc-cinema-manager' ); ?></button>
-            <button type="button" class="button" id="btn_remove_trailer" style="<?php echo ! empty( $movie->trailer_url ) ? 'display:inline-block;' : 'display:none;'; ?> color:#ef4444;"><?php esc_html_e( 'Remove', 'bsc-cinema-manager' ); ?></button>
+            <button type="button" class="button" id="btn_upload_trailer">▶️ <?php esc_html_e( 'Choose Trailer', 'bcs-screen-manager' ); ?></button>
+            <button type="button" class="button" id="btn_remove_trailer" style="<?php echo ! empty( $movie->trailer_url ) ? 'display:inline-block;' : 'display:none;'; ?> color:#ef4444;"><?php esc_html_e( 'Remove', 'bcs-screen-manager' ); ?></button>
           </div>
         </div>
       </div>
 
       <div class="bsc-grid-2">
         <div class="bsc-input-group">
-          <label><?php esc_html_e( 'Short Summary (Card Excerpt)', 'bsc-cinema-manager' ); ?> *</label>
+          <label><?php esc_html_e( 'Short Summary (Card Excerpt)', 'bcs-screen-manager' ); ?> *</label>
           <textarea name="movie_short_desc" rows="3" required placeholder="Quick 1-2 sentence overview..."><?php echo esc_textarea( $movie->short_description ?? '' ); ?></textarea>
         </div>
         <div class="bsc-input-group">
-          <label><?php esc_html_e( 'Full Storyline & Synopsis', 'bsc-cinema-manager' ); ?> *</label>
+          <label><?php esc_html_e( 'Full Storyline & Synopsis', 'bcs-screen-manager' ); ?> *</label>
           <textarea name="movie_synopsis" rows="3" required placeholder="Detailed movie plot and notes..."><?php echo esc_textarea( $movie->synopsis ?? '' ); ?></textarea>
         </div>
       </div>
@@ -449,13 +448,13 @@ if ( $movie && ! empty( $movie->showtimes ) ) {
     <div class="bsc-form-card" style="border: 1px solid #bbf7d0;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
         <h4 class="bsc-section-title" style="margin:0; border:none; padding:0;">
-          🗓️ <?php esc_html_e( 'Screening Schedule Planner', 'bsc-cinema-manager' ); ?>
+          🗓️ <?php esc_html_e( 'Screening Schedule Planner', 'bcs-screen-manager' ); ?>
           <span id="bsc_total_days_count" style="background:#059669; color:#fff; font-size:0.7rem; font-weight:800; padding:2px 8px; border-radius:10px;">
             <?php echo count( $day_schedules ); ?> Days
           </span>
         </h4>
         <button type="button" class="button button-primary" id="btn_add_day_block" style="background:#059669; border-color:#059669; font-weight:700;">
-          + <?php esc_html_e( 'Add Single Day', 'bsc-cinema-manager' ); ?>
+          + <?php esc_html_e( 'Add Single Day', 'bcs-screen-manager' ); ?>
         </button>
       </div>
 
@@ -511,8 +510,8 @@ if ( $movie && ! empty( $movie->showtimes ) ) {
     <!-- 04. CAST & CREW -->
     <div class="bsc-form-card">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-        <h4 class="bsc-section-title" style="margin:0; border:none; padding:0;">🎭 <?php esc_html_e( 'Lead Cast & Crew', 'bsc-cinema-manager' ); ?></h4>
-        <button type="button" class="button button-secondary" id="btn_add_cast_row">+ <?php esc_html_e( 'Add Cast Member', 'bsc-cinema-manager' ); ?></button>
+        <h4 class="bsc-section-title" style="margin:0; border:none; padding:0;">🎭 <?php esc_html_e( 'Lead Cast & Crew', 'bcs-screen-manager' ); ?></h4>
+        <button type="button" class="button button-secondary" id="btn_add_cast_row">+ <?php esc_html_e( 'Add Cast Member', 'bcs-screen-manager' ); ?></button>
       </div>
 
       <div id="bsc_cast_repeater_container" style="display:flex; flex-direction:column; gap:8px;">
@@ -534,8 +533,8 @@ if ( $movie && ! empty( $movie->showtimes ) ) {
     </div>
 
     <!-- SUBMIT BUTTON -->
-    <button type="submit" class="button button-primary" style="background:#059669; border-color:#059669; width:100%; padding:12px; font-weight:800; font-size:1rem; border-radius:8px; display:flex; align-items:center; justify-content:center; gap:8px; box-shadow:0 2px 6px rgba(5,150,105,0.25);">
-      💾 <?php echo $is_edit ? esc_html__( 'Update Movie Presentation', 'bsc-cinema-manager' ) : esc_html__( 'Publish Movie Presentation', 'bsc-cinema-manager' ); ?>
+    <button type="submit" class="button button-primary" style="background:#059669; border-color:#059669; width:100%; padding:12px; font-weight:800; font-size:1rem; border-radius:8px; display:flex; align-items:center; justify-content:center; gap:8px; box-shadow:0 2px 6px rgba(5,150,105,0.25); cursor:pointer;">
+      💾 <?php echo $is_edit ? esc_html__( 'Update Movie Presentation', 'bcs-screen-manager' ) : esc_html__( 'Publish Movie Presentation', 'bcs-screen-manager' ); ?>
     </button>
   </form>
 </div>

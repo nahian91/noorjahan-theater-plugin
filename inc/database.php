@@ -2,6 +2,8 @@
 /**
  * Big Screen Cinemas - Database Schema & Migration Handler
  *
+ * Path: inc/database.php
+ *
  * @package BigScreenCinemas
  */
 
@@ -127,6 +129,43 @@ function bsc_create_database_tables() {
 }
 
 /**
+ * Generates custom cinema ticket ID in the format: BCS-DD-MON-YY-##
+ * Example: BCS-03-SEP-26-01, BCS-03-SEP-26-02
+ *
+ * @param string $prefix Prefix for ticket sequence.
+ * @return string Formatted unique ticket reference code.
+ */
+function bsc_generate_cinema_ticket_id( $prefix = 'BCS' ) {
+    global $wpdb;
+    $table_bookings = $wpdb->prefix . 'bsc_bookings';
+
+    $today_ymd = current_time( 'Y-m-d' );
+    $day_str   = strtoupper( current_time( 'd-M-y' ) );
+
+    // Count tickets issued today to form the sequential counter
+    $count_today = (int) $wpdb->get_var( $wpdb->prepare(
+        "SELECT COUNT(id) FROM {$table_bookings} WHERE DATE(booking_date) = %s",
+        $today_ymd
+    ) );
+
+    $sequence_number = str_pad( (string) ( $count_today + 1 ), 2, '0', STR_PAD_LEFT );
+    $candidate_token = sprintf( '%s-%s-%s', sanitize_key( $prefix ), $day_str, $sequence_number );
+
+    // Collision check: fallback if duplicate index exists
+    $token_exists = (int) $wpdb->get_var( $wpdb->prepare(
+        "SELECT COUNT(id) FROM {$table_bookings} WHERE booking_token = %s",
+        $candidate_token
+    ) );
+
+    if ( $token_exists > 0 ) {
+        $extra_seq       = str_pad( (string) wp_rand( 10, 99 ), 2, '0', STR_PAD_LEFT );
+        $candidate_token = sprintf( '%s-%s-%s', sanitize_key( $prefix ), $day_str, $extra_seq );
+    }
+
+    return $candidate_token;
+}
+
+/**
  * Seeds initial master administrative staff record if table is empty.
  */
 function bsc_seed_initial_staff() {
@@ -135,18 +174,23 @@ function bsc_seed_initial_staff() {
 
     $exists = $wpdb->get_var( "SELECT COUNT(id) FROM {$table}" );
     if ( 0 === (int) $exists ) {
-        $wpdb->insert( $table, array(
-            'staff_code'       => '#STF-1001',
-            'name'             => 'Abdullah Nahian',
-            'role_title'       => 'Master Administrator',
-            'assigned_hall'    => 'All Multiplex Facilities',
-            'duty_status'      => 'On Duty',
-            'shift_schedule'   => 'Full Rotational',
-            'phone'            => '+880 1700-000001',
-            'email'            => 'admin@bigscreencinemas.com',
-            'salary'           => 60000.00,
-            'responsibilities' => 'Full administrative access, box-office accounting supervision, and master show scheduler.',
-            'joined_date'      => current_time( 'Y-m-d' ),
-        ), array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s' ) );
+        $wpdb->insert(
+            $table,
+            array(
+                'staff_code'       => '#STF-1001',
+                'name'             => 'Abdullah Nahian',
+                'role_title'       => 'Master Administrator',
+                'assigned_hall'    => 'All Multiplex Facilities',
+                'duty_status'      => 'On Duty',
+                'shift_schedule'   => 'Full Rotational',
+                'phone'            => '+880 1700-000001',
+                'email'            => 'admin@bigscreencinemas.com',
+                'salary'           => 60000.00,
+                'photo_url'        => '',
+                'responsibilities' => 'Full administrative access, box-office accounting supervision, and master show scheduler.',
+                'joined_date'      => current_time( 'Y-m-d' ),
+            ),
+            array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%f', '%s', '%s', '%s' )
+        );
     }
 }
