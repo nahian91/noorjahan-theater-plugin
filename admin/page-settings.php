@@ -1,13 +1,16 @@
 <?php
 /**
  * Plugin Name:   Big Screen Cinemas - Master Controller Suite (Settings Module)
- * Description:   Simplified Admin Settings Renderer (Standard & VIP Prices with Descriptions).
+ * Description:   Simplified Admin Settings Renderer & Processor (Standard & VIP Prices with Descriptions).
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
+// =============================================================================
+// 1. RENDER SETTINGS PAGE UI
+// =============================================================================
 if ( ! function_exists( 'bsc_render_settings_page' ) ) {
     function bsc_render_settings_page() {
         if ( ! current_user_can( 'manage_options' ) ) {
@@ -184,4 +187,48 @@ if ( ! function_exists( 'bsc_render_settings_page' ) ) {
             bsc_render_page_shell_close();
         }
     }
+}
+
+// =============================================================================
+// 2. PROCESS & SAVE FORM SUBMISSION HANDLER
+// =============================================================================
+add_action( 'admin_post_bsc_save_settings', 'bsc_handle_save_settings_submission' );
+function bsc_handle_save_settings_submission() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_die( esc_html__( 'Unauthorized access.', 'bsc-cinema-manager' ) );
+    }
+
+    check_admin_referer( 'bsc_save_settings_verify' );
+
+    // Save Standard Tier Data
+    if ( isset( $_POST['bsc_standard_price'] ) ) {
+        update_option( 'bsc_standard_price', floatval( $_POST['bsc_standard_price'] ) );
+    }
+    if ( isset( $_POST['bsc_standard_desc'] ) ) {
+        update_option( 'bsc_standard_desc', sanitize_text_field( wp_unslash( $_POST['bsc_standard_desc'] ) ) );
+    }
+
+    // Save VIP Tier Data
+    if ( isset( $_POST['bsc_vip_price'] ) ) {
+        update_option( 'bsc_vip_price', floatval( $_POST['bsc_vip_price'] ) );
+    }
+    if ( isset( $_POST['bsc_vip_desc'] ) ) {
+        update_option( 'bsc_vip_desc', sanitize_text_field( wp_unslash( $_POST['bsc_vip_desc'] ) ) );
+    }
+
+    // Save Switch & Percentage Controls
+    $enable_tax = isset( $_POST['enable_tax'] ) && 'yes' === $_POST['enable_tax'] ? 'yes' : 'no';
+    update_option( 'bsc_enable_tax', $enable_tax );
+
+    if ( isset( $_POST['service_charge_pct'] ) ) {
+        update_option( 'bsc_service_charge_pct', floatval( $_POST['service_charge_pct'] ) );
+    }
+
+    if ( isset( $_POST['seat_hold_timeout'] ) ) {
+        update_option( 'bsc_seat_hold_timeout', absint( $_POST['seat_hold_timeout'] ) );
+    }
+
+    // Redirect back with success flag
+    wp_safe_redirect( admin_url( 'admin.php?page=bsc-settings&updated=true' ) );
+    exit;
 }
