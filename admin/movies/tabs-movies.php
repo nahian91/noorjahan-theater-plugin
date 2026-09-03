@@ -143,31 +143,31 @@ if (!defined('ABSPATH')) exit;
 <div class="bsc-subtabs-nav">
   <a href="<?php echo esc_url(admin_url('admin.php?page=bsc-movies&subtab=all')); ?>" class="bsc-subtab-btn <?php echo ($subtab === 'all' || $subtab === 'view' || $subtab === 'edit') ? 'active' : ''; ?>">
     <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" style="vertical-align:-2px; margin-right:4px;"><path d="M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4h-4z"/></svg>
-    <?php esc_html_e('All Movies', 'big-screen-cinemas'); ?>
+    <?php esc_html_e('All Movies', 'bsc-cinema-manager'); ?>
   </a>
   <a href="<?php echo esc_url(admin_url('admin.php?page=bsc-movies&subtab=add')); ?>" class="bsc-subtab-btn <?php echo ($subtab === 'add') ? 'active' : ''; ?>">
     <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" style="vertical-align:-2px; margin-right:4px;"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-    <?php esc_html_e('Add Movie', 'big-screen-cinemas'); ?>
+    <?php esc_html_e('Add Movie', 'bsc-cinema-manager'); ?>
   </a>
 </div>
 
 <?php if (isset($_GET['movie_added'])): ?>
   <div style="background:#ecfdf5; color:#10b981; border:1px solid #a7f3d0; padding:12px 18px; border-radius:8px; margin-bottom:20px; font-weight:700; display:flex; align-items:center; gap:8px;">
     <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
-    <?php esc_html_e('Movie published successfully to database!', 'big-screen-cinemas'); ?>
+    <?php esc_html_e('Movie published successfully to database!', 'bsc-cinema-manager'); ?>
   </div>
 <?php endif; ?>
 
 <?php if (isset($_GET['movie_updated'])): ?>
   <div style="background:#ecfdf5; color:#10b981; border:1px solid #a7f3d0; padding:12px 18px; border-radius:8px; margin-bottom:20px; font-weight:700; display:flex; align-items:center; gap:8px;">
     <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
-    <?php esc_html_e('Movie details updated successfully!', 'big-screen-cinemas'); ?>
+    <?php esc_html_e('Movie details updated successfully!', 'bsc-cinema-manager'); ?>
   </div>
 <?php endif; ?>
 
 <?php if (isset($_GET['movie_deleted'])): ?>
   <div style="background:#fef2f2; color:#ef4444; border:1px solid #fecaca; padding:12px 18px; border-radius:8px; margin-bottom:20px; font-weight:700; display:flex; align-items:center; gap:8px;">
     <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
-    <?php esc_html_e('Movie deleted successfully from database!', 'big-screen-cinemas'); ?>
+    <?php esc_html_e('Movie deleted successfully from database!', 'bsc-cinema-manager'); ?>
   </div>
 <?php endif; ?>

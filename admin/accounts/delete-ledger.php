@@ -9,8 +9,8 @@ if ($item_id > 0 && wp_verify_nonce($_GET['_wpnonce'] ?? '', 'bsc_delete_ledger_
   exit;
 } else {
   wp_die(
-    esc_html__('Security check failed or invalid ledger identifier.', 'big-screen-cinemas'),
-    esc_html__('Error', 'big-screen-cinemas'),
+    esc_html__('Security check failed or invalid ledger identifier.', 'bsc-cinema-manager'),
+    esc_html__('Error', 'bsc-cinema-manager'),
     array('response' => 403)
   );
 }

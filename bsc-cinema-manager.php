@@ -1,1118 +1,954 @@
 <?php
 /**
- * Plugin Name: Big Screen Cinemas - Master Controller Suite
- * Plugin URI:  https://bigscreencinemas.com
- * Description: Standalone Cinema Multiplex Management Suite with 4K Media Uploads, Cast Photo Repeaters, Full CRUD Movie Management, Dynamic Scheduling, and Turnstile Booking Engine.
- * Version:     12.0.0
- * Author:      Big Screen Cinemas
- * Text Domain: big-screen-cinemas
+ * Plugin Name:     Big Screen Cinemas - Master Controller Suite
+ * Plugin URI:      https://bigscreencinemas.com
+ * Description:     Cinema Multiplex Management Suite with 4K Media Uploads, CRUD Movie Management, Dynamic Scheduling, and Turnstile Booking Engine.
+ * Version:         12.1.0
+ * Author:          Abdullah Nahian
+ * Text Domain:     bcs-screen-manager
+ * Domain Path:     /languages
+ * Requires at least: 5.8
+ * Requires PHP:      7.4
  */
 
-if (!defined('ABSPATH')) {
-  exit;
+if ( ! defined( 'ABSPATH' ) ) {
+    exit;
 }
 
-define('BSC_PLUGIN_PATH', plugin_dir_path(__FILE__));
+define( 'BSC_VERSION', '12.1.0' );
+define( 'BSC_PLUGIN_PATH', plugin_dir_path( __FILE__ ) );
+define( 'BSC_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
+define( 'BSC_ADMIN_CAP', 'manage_options' );
 
-// Load layout shell and individual page renderers
-require_once BSC_PLUGIN_PATH . 'admin/layout-shell.php';
-require_once BSC_PLUGIN_PATH . 'admin/page-dashboard.php';
-require_once BSC_PLUGIN_PATH . 'admin/page-booking.php';
-require_once BSC_PLUGIN_PATH . 'admin/page-movies.php';
-require_once BSC_PLUGIN_PATH . 'admin/page-customers.php';
-require_once BSC_PLUGIN_PATH . 'admin/page-accounts.php';
-require_once BSC_PLUGIN_PATH . 'admin/page-users.php';
-require_once BSC_PLUGIN_PATH . 'admin/page-settings.php';
+// Load Database Layer exclusively from the inc folder
+$bsc_db_file = BSC_PLUGIN_PATH . 'inc/database.php';
+if ( is_readable( $bsc_db_file ) ) {
+    require_once $bsc_db_file;
+}
 
-// Check and include page-gallery if created, otherwise fallback gracefully
-if (file_exists(BSC_PLUGIN_PATH . 'admin/page-gallery.php')) {
-  require_once BSC_PLUGIN_PATH . 'admin/page-gallery.php';
-} else {
-  function bsc_render_gallery_page() {
-    bsc_render_page_shell_open('bsc-gallery');
+// Load all admin page modules
+$bsc_modules = array(
+    'admin/page-dashboard.php',
+    'admin/page-booking.php',
+    'admin/page-movies.php',
+    'admin/page-gallery.php',
+    'admin/page-customers.php',
+    'admin/page-accounts.php',
+    'admin/page-users.php',
+    'admin/page-settings.php',
+);
+
+foreach ( $bsc_modules as $bsc_file ) {
+    $bsc_path = BSC_PLUGIN_PATH . $bsc_file;
+    if ( is_readable( $bsc_path ) ) {
+        require_once $bsc_path;
+    }
+}
+
+// Plugin Activation Hook
+register_activation_hook( __FILE__, 'bsc_activate_plugin' );
+function bsc_activate_plugin() {
+    if ( function_exists( 'bsc_create_database_tables' ) ) {
+        bsc_create_database_tables();
+    }
+}
+
+function bsc_generate_secure_token( $prefix = 'BSC' ) {
+    return sprintf( '#%s-%s-TX', sanitize_key( $prefix ), strtoupper( wp_generate_password( 8, false, false ) ) );
+}
+
+// Shell Layout: Open Wrapper & Sidebar
+function bsc_render_page_shell_open( $current_page ) {
+    $logout_url = wp_logout_url( home_url() );
     ?>
-    <div class="cinema-panel">
-      <h3 class="cinema-panel-title">🖼️ <?php esc_html_e('Multiplex Gallery Management', 'big-screen-cinemas'); ?></h3>
-      <p style="color:var(--cinema-text-secondary);"><?php esc_html_e('Manage front-end gallery photos, luxury lounge showcases, and laser screen stills.', 'big-screen-cinemas'); ?></p>
-      
-      <div style="background:#f8fafc; border:1px dashed var(--cinema-border); padding:2rem; text-align:center; border-radius:8px; margin-top:1.5rem;">
-        <p style="font-weight:700; color:var(--cinema-text-main); margin-bottom:0.75rem;"><?php esc_html_e('Gallery Media Manager Active', 'big-screen-cinemas'); ?></p>
-        <button type="button" class="button button-primary" onclick="alert('Gallery uploader active.')">📷 Upload Gallery Image</button>
-      </div>
+    <style>
+        #wpcontent { padding-left: 0 !important; }
+        #wpbody-content { padding-bottom: 0 !important; }
+        .notice, #wpfooter { display: none !important; }
+
+        :root {
+            --cinema-bg-canvas: #f0f4f8;
+            --cinema-sidebar-bg: #ffffff;
+            --cinema-card-bg: #ffffff;
+            --cinema-primary-dark: #0f1e24;
+            --cinema-accent-teal: #0d9488;
+            --cinema-accent-green: #10b981;
+            --cinema-accent-amber: #f59e0b;
+            --cinema-accent-red: #ef4444;
+            --cinema-accent-blue: #3b82f6;
+            --cinema-border: #e2e8f0;
+            --cinema-border-light: #f1f5f9;
+            --cinema-text-main: #0f172a;
+            --cinema-text-muted: #64748b;
+            --cinema-radius-sm: 8px;
+            --cinema-radius-md: 14px;
+            --cinema-radius-lg: 20px;
+            --cinema-font-main: 'Plus Jakarta Sans', system-ui, sans-serif;
+            --cinema-font-mono: 'Space Grotesk', monospace;
+        }
+
+        .bsc-app-wrap {
+            display: flex;
+            min-height: calc(100vh - 32px);
+            background-color: var(--cinema-bg-canvas);
+            font-family: var(--cinema-font-main);
+            color: var(--cinema-text-main);
+            box-sizing: border-box;
+        }
+
+        .bsc-sidebar {
+            width: 260px;
+            background: var(--cinema-sidebar-bg);
+            border-right: 1px solid var(--cinema-border);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            flex-shrink: 0;
+        }
+
+        .bsc-sidebar-header {
+            padding: 1.5rem 1.25rem;
+            display: flex;
+            align-items: center;
+            border-bottom: 1px solid var(--cinema-border-light);
+        }
+
+        .bsc-admin-profile {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .bsc-avatar-sm {
+            width: 42px;
+            height: 42px;
+            border-radius: 50%;
+            background: var(--cinema-primary-dark);
+            border: 2px solid var(--cinema-accent-teal);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-weight: 800;
+            font-size: 0.85rem;
+        }
+
+        .bsc-admin-name {
+            font-weight: 800;
+            font-size: 0.95rem;
+            color: var(--cinema-text-main);
+            line-height: 1.2;
+        }
+
+        .bsc-admin-role {
+            font-size: 0.75rem;
+            color: var(--cinema-text-muted);
+        }
+
+        .bsc-nav-list {
+            list-style: none;
+            padding: 1rem 0.75rem;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 0.35rem;
+        }
+
+        .bsc-nav-item a {
+            display: flex;
+            align-items: center;
+            gap: 0.85rem;
+            padding: 0.75rem 1rem;
+            color: var(--cinema-text-muted);
+            font-weight: 700;
+            font-size: 0.88rem;
+            border-radius: var(--cinema-radius-sm);
+            text-decoration: none;
+            transition: all 0.2s ease;
+        }
+
+        .bsc-nav-item a:hover {
+            background: #f8fafc;
+            color: var(--cinema-text-main);
+        }
+
+        .bsc-nav-item.active a {
+            background: #064e3b;
+            color: #ffffff;
+        }
+
+        .bsc-nav-item svg {
+            width: 18px;
+            height: 18px;
+            fill: currentColor;
+        }
+
+        .bsc-sidebar-bottom {
+            padding: 1rem 0.75rem;
+            border-top: 1px solid var(--cinema-border-light);
+            margin-top: auto;
+        }
+
+        .bsc-canvas {
+            flex: 1;
+            padding: 2rem 2.5rem;
+            overflow-y: auto;
+        }
+
+        .cinema-hero-banner {
+            background: linear-gradient(135deg, #0b2228 0%, #063d35 100%);
+            color: #ffffff;
+            border-radius: var(--cinema-radius-lg);
+            padding: 1.75rem 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 2rem;
+            box-shadow: 0 10px 25px -5px rgba(6, 61, 53, 0.2);
+        }
+
+        .cinema-hero-user-block {
+            display: flex;
+            align-items: center;
+            gap: 1.25rem;
+        }
+
+        .cinema-hero-avatar-large {
+            width: 68px;
+            height: 68px;
+            border-radius: 50%;
+            border: 3px solid #14b8a6;
+            object-fit: cover;
+        }
+
+        .cinema-hero-meta h1 {
+            font-size: 1.5rem;
+            font-weight: 900;
+            letter-spacing: -0.02em;
+            margin: 0.2rem 0;
+            color: #fff;
+        }
+
+        .cinema-badge-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.25rem 0.65rem;
+            border-radius: 9999px;
+            font-size: 0.72rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .cinema-badge-pill.active {
+            background: rgba(16, 185, 129, 0.2);
+            color: #34d399;
+            border: 1px solid rgba(16, 185, 129, 0.4);
+        }
+
+        .cinema-hero-stats-strip {
+            display: flex;
+            gap: 1.25rem;
+            font-size: 0.85rem;
+            color: #cbd5e1;
+            margin-top: 0.25rem;
+        }
+
+        .cinema-clock-card {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 0.85rem 1.25rem;
+            border-radius: var(--cinema-radius-md);
+            text-align: right;
+        }
+
+        .cinema-clock-card .date {
+            font-size: 0.8rem;
+            color: #94a3b8;
+            font-weight: 700;
+        }
+
+        .cinema-clock-card .time {
+            font-size: 1.45rem;
+            font-weight: 900;
+            font-family: var(--cinema-font-mono);
+            color: #ffffff;
+        }
+
+        .cinema-panel {
+            background: var(--cinema-card-bg);
+            border: 1px solid var(--cinema-border);
+            border-radius: var(--cinema-radius-md);
+            padding: 1.75rem;
+            margin-bottom: 2rem;
+        }
+
+        .cinema-panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+
+        .cinema-panel-title {
+            font-size: 1.05rem;
+            font-weight: 800;
+            color: var(--cinema-text-main);
+            display: flex;
+            align-items: center;
+            gap: 0.55rem;
+            margin: 0;
+        }
+
+        .cinema-table-wrap { overflow-x: auto; }
+        .cinema-data-table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+            font-size: 0.88rem;
+        }
+        .cinema-data-table th {
+            padding: 0.85rem 1rem;
+            background: #f8fafc;
+            color: var(--cinema-text-muted);
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            border-bottom: 1px solid var(--cinema-border);
+        }
+        .cinema-data-table td {
+            padding: 1rem;
+            border-bottom: 1px solid var(--cinema-border-light);
+            vertical-align: middle;
+        }
+
+        .cinema-voucher-tag {
+            background: #fdf2f8;
+            border: 1px solid #fbcfe8;
+            color: #db2777;
+            font-family: var(--cinema-font-mono);
+            font-size: 0.75rem;
+            font-weight: 800;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+        }
+
+        .cinema-badge-payment {
+            background: #f1f5f9;
+            padding: 0.2rem 0.55rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: var(--cinema-text-muted);
+        }
+
+        .bsc-form-grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.25rem;
+        }
+
+        .bsc-form-grid-3 {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1rem;
+        }
+
+        .bsc-form-group { margin-bottom: 1.15rem; }
+        .bsc-form-group label { display: block; font-weight: 800; font-size: 0.82rem; color: var(--cinema-text-main); margin-bottom: 0.4rem; }
+        .bsc-form-group input, .bsc-form-group textarea, .bsc-form-group select {
+            width: 100%; padding: 0.7rem 0.85rem; border: 1px solid var(--cinema-border); border-radius: var(--cinema-radius-sm); font-size: 0.9rem; background: #fff; font-family: inherit;
+        }
+
+        .bsc-media-uploader-box {
+            border: 2px dashed var(--cinema-border);
+            background: #f8fafc;
+            padding: 1.25rem;
+            border-radius: var(--cinema-radius-sm);
+            text-align: center;
+        }
+
+        .bsc-media-preview-img {
+            max-width: 120px;
+            height: auto;
+            border-radius: 6px;
+            margin: 0.5rem auto;
+            border: 1px solid var(--cinema-border);
+        }
+
+        .bsc-media-preview-video {
+            max-width: 100%;
+            max-height: 160px;
+            margin-top: 0.75rem;
+            border-radius: 6px;
+        }
+
+        .bsc-repeater-row {
+            display: grid;
+            grid-template-columns: 1.2fr 1.2fr 1.5fr auto;
+            gap: 0.75rem;
+            margin-bottom: 0.75rem;
+            align-items: center;
+            background: #fff;
+            padding: 0.75rem;
+            border: 1px solid var(--cinema-border);
+            border-radius: 6px;
+        }
+
+        .bsc-cast-photo-thumb {
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 1px solid var(--cinema-border);
+        }
+
+        .bsc-btn-remove-row {
+            background: #fee2e2;
+            color: #ef4444;
+            border: none;
+            padding: 0.6rem 0.8rem;
+            border-radius: 6px;
+            font-weight: 800;
+            cursor: pointer;
+        }
+
+        .bsc-subtabs-nav {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid var(--cinema-border);
+            padding-bottom: 10px;
+        }
+        .bsc-subtab-btn {
+            padding: 8px 18px;
+            background: #e2e8f0;
+            color: #334155;
+            font-weight: 700;
+            border-radius: 6px;
+            text-decoration: none;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+        .bsc-subtab-btn.active {
+            background: #0d9488;
+            color: #fff;
+        }
+
+        .bsc-action-btn-group {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .bsc-btn-action {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 5px 10px;
+            font-size: 0.75rem;
+            font-weight: 800;
+            border-radius: 6px;
+            text-decoration: none;
+            transition: all 0.2s ease;
+            border: none;
+            cursor: pointer;
+        }
+
+        .bsc-btn-action.view { background: #eff6ff; color: #2563eb; border: 1px solid #bfdbfe; }
+        .bsc-btn-action.view:hover { background: #2563eb; color: #fff; }
+
+        .bsc-btn-action.edit { background: #fefce8; color: #ca8a04; border: 1px solid #fef08a; }
+        .bsc-btn-action.edit:hover { background: #ca8a04; color: #fff; }
+
+        .bsc-btn-action.delete { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
+        .bsc-btn-action.delete:hover { background: #dc2626; color: #fff; }
+
+        .bsc-view-hero-grid {
+            display: grid;
+            grid-template-columns: 260px 1fr;
+            gap: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        .bsc-view-poster-wrap img {
+            width: 100%;
+            border-radius: var(--cinema-radius-md);
+            border: 2px solid var(--cinema-border);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.06);
+            display: block;
+        }
+
+        .bsc-spec-pill-deck {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin: 0.85rem 0 1.25rem 0;
+        }
+
+        .bsc-spec-pill {
+            background: #f1f5f9;
+            border: 1px solid var(--cinema-border);
+            padding: 0.35rem 0.75rem;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            font-weight: 700;
+            color: var(--cinema-text-main);
+        }
+
+        .bsc-view-stats-row {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .bsc-stat-card-mini {
+            background: #f8fafc;
+            border: 1px solid var(--cinema-border);
+            padding: 0.85rem 1rem;
+            border-radius: 8px;
+        }
+
+        .bsc-stat-card-mini .k {
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            font-weight: 800;
+            color: var(--cinema-text-muted);
+        }
+
+        .bsc-stat-card-mini .v {
+            font-size: 1.05rem;
+            font-weight: 800;
+            margin-top: 2px;
+            color: var(--cinema-text-main);
+        }
+
+        .bsc-cast-grid-view {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .bsc-cast-card-mini {
+            display: flex;
+            align-items: center;
+            gap: 0.85rem;
+            background: #f8fafc;
+            border: 1px solid var(--cinema-border);
+            padding: 0.75rem;
+            border-radius: 8px;
+        }
+
+        .bsc-cast-avatar {
+            width: 46px;
+            height: 46px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 2px solid var(--cinema-accent-teal);
+        }
+    </style>
+
+    <div class="bsc-app-wrap">
+        <!-- SIDEBAR -->
+        <aside class="bsc-sidebar">
+            <div>
+                <div class="bsc-sidebar-header">
+                    <div class="bsc-admin-profile">
+                        <div class="bsc-avatar-sm">AN</div>
+                        <div>
+                            <div class="bsc-admin-name">Abdullah Nahian</div>
+                            <div class="bsc-admin-role"><?php esc_html_e( 'Theater Administrator', 'bsc-cinema-manager' ); ?></div>
+                        </div>
+                    </div>
+                </div>
+
+                <ul class="bsc-nav-list">
+                    <li class="bsc-nav-item <?php echo ( 'bsc-dashboard' === $current_page ) ? 'active' : ''; ?>">
+                        <a href="<?php echo esc_url( admin_url( 'admin.php?page=bsc-dashboard' ) ); ?>"><svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg><span><?php esc_html_e( 'Dashboard', 'bsc-cinema-manager' ); ?></span></a>
+                    </li>
+                    <li class="bsc-nav-item <?php echo ( 'bsc-booking' === $current_page ) ? 'active' : ''; ?>">
+                        <a href="<?php echo esc_url( admin_url( 'admin.php?page=bsc-booking' ) ); ?>"><svg viewBox="0 0 24 24"><path d="M22 10V6c0-1.1-.9-2-2-2H4c-1.1 0-1.99.9-1.99 2v4c1.1 0 1.99.9 1.99 2s-.89 2-2 2v4c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2v-4c-1.1 0-2-.9-2-2s.9-2 2-2zm-9 7.5h-2v-2h2v2zm0-4.5h-2v-2h2v2zm0-4.5h-2v-2h2v2z"/></svg><span><?php esc_html_e( 'Booking', 'bsc-cinema-manager' ); ?></span></a>
+                    </li>
+                    <li class="bsc-nav-item <?php echo ( 'bsc-movies' === $current_page ) ? 'active' : ''; ?>">
+                        <a href="<?php echo esc_url( admin_url( 'admin.php?page=bsc-movies' ) ); ?>"><svg viewBox="0 0 24 24"><path d="M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4h-4z"/></svg><span><?php esc_html_e( 'Movies', 'bsc-cinema-manager' ); ?></span></a>
+                    </li>
+                    <li class="bsc-nav-item <?php echo ( 'bsc-gallery' === $current_page ) ? 'active' : ''; ?>">
+                        <a href="<?php echo esc_url( admin_url( 'admin.php?page=bsc-gallery' ) ); ?>"><svg viewBox="0 0 24 24"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg><span><?php esc_html_e( 'Gallery', 'bsc-cinema-manager' ); ?></span></a>
+                    </li>
+                    <li class="bsc-nav-item <?php echo ( 'bsc-customers' === $current_page ) ? 'active' : ''; ?>">
+                        <a href="<?php echo esc_url( admin_url( 'admin.php?page=bsc-customers' ) ); ?>"><svg viewBox="0 0 24 24"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg><span><?php esc_html_e( 'Customers', 'bsc-cinema-manager' ); ?></span></a>
+                    </li>
+                    <li class="bsc-nav-item <?php echo ( 'bsc-accounts' === $current_page ) ? 'active' : ''; ?>">
+                        <a href="<?php echo esc_url( admin_url( 'admin.php?page=bsc-accounts' ) ); ?>"><svg viewBox="0 0 24 24"><path d="M19 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.89-2-2-2zm0 16H5V5h14v14z"/></svg><span><?php esc_html_e( 'Accounts', 'bsc-cinema-manager' ); ?></span></a>
+                    </li>
+                    <li class="bsc-nav-item <?php echo ( 'bsc-users' === $current_page ) ? 'active' : ''; ?>">
+                        <a href="<?php echo esc_url( admin_url( 'admin.php?page=bsc-users' ) ); ?>"><svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg><span><?php esc_html_e( 'Users', 'bsc-cinema-manager' ); ?></span></a>
+                    </li>
+                    <li class="bsc-nav-item <?php echo ( 'bsc-settings' === $current_page ) ? 'active' : ''; ?>">
+                        <a href="<?php echo esc_url( admin_url( 'admin.php?page=bsc-settings' ) ); ?>"><svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg><span><?php esc_html_e( 'Settings', 'bsc-cinema-manager' ); ?></span></a>
+                    </li>
+                </ul>
+            </div>
+            <div class="bsc-sidebar-bottom">
+                <ul class="bsc-nav-list" style="padding:0;">
+                    <li class="bsc-nav-item"><a href="<?php echo esc_url( $logout_url ); ?>" style="color:var(--cinema-accent-red);"><svg viewBox="0 0 24 24"><path d="M10.09 15.59L11.5 17l5-5-5-5-1.41 1.41L12.67 11H3v2h9.67l-2.58 2.59zM19 3H5c-1.11 0-2 .9-2 2v4h2V5h14v14H5v-4H3v4c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"/></svg><span><?php esc_html_e( 'Logout', 'bsc-cinema-manager' ); ?></span></a></li>
+                </ul>
+            </div>
+        </aside>
+
+        <!-- CANVAS BODY -->
+        <main class="bsc-canvas">
+    <?php
+}
+
+// Shell Layout: Close Wrapper
+function bsc_render_page_shell_close() {
+    ?>
+        </main>
     </div>
     <?php
-    bsc_render_page_shell_close();
-  }
 }
 
-/* ==========================================================================
-   01. DATABASE SCHEMA & ACTIVATION
-   ========================================================================== */
-register_activation_hook(__FILE__, 'bsc_create_custom_tables');
-function bsc_create_custom_tables() {
-  global $wpdb;
-  $table_movies    = $wpdb->prefix . 'bsc_control_movies';
-  $table_schedule  = $wpdb->prefix . 'bsc_control_schedule';
-  $table_ledger    = $wpdb->prefix . 'bsc_ledger';
-  $table_bookings  = $wpdb->prefix . 'bsc_bookings';
-  $table_customers = $wpdb->prefix . 'bsc_customers';
-  $table_staff     = $wpdb->prefix . 'bsc_staff_crew';
-  $charset_collate = $wpdb->get_charset_collate();
-
-  require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
-
-  dbDelta("CREATE TABLE $table_movies (
-    id mediumint(9) NOT NULL AUTO_INCREMENT,
-    title varchar(255) NOT NULL,
-    category varchar(100) NOT NULL,
-    genre varchar(100) NOT NULL,
-    duration varchar(50) NOT NULL,
-    rating varchar(10) NOT NULL,
-    age_rating varchar(50) DEFAULT 'PG-13' NOT NULL,
-    audio_language varchar(150) NOT NULL,
-    director varchar(150) NOT NULL,
-    writers varchar(255) NOT NULL,
-    auditorium varchar(100) DEFAULT 'Auditorium 1 (23 Seats)' NOT NULL,
-    showtimes longtext NOT NULL,
-    poster_url text NOT NULL,
-    trailer_url text NOT NULL,
-    badge_tag varchar(50) NOT NULL,
-    release_date date NOT NULL,
-    short_description text NOT NULL,
-    synopsis longtext NOT NULL,
-    cast_crew longtext NOT NULL,
-    created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    PRIMARY KEY (id)
-  ) $charset_collate;");
-
-  dbDelta("CREATE TABLE $table_schedule (
-    id mediumint(9) NOT NULL AUTO_INCREMENT,
-    movie_title varchar(255) NOT NULL,
-    auditorium varchar(100) NOT NULL,
-    format_type varchar(50) NOT NULL,
-    showtimes varchar(255) NOT NULL,
-    price decimal(10,2) NOT NULL,
-    PRIMARY KEY (id)
-  ) $charset_collate;");
-
-  dbDelta("CREATE TABLE $table_ledger (
-    id mediumint(9) NOT NULL AUTO_INCREMENT,
-    reference_no varchar(64) NOT NULL,
-    txn_type varchar(20) DEFAULT 'Income' NOT NULL,
-    particulars varchar(255) NOT NULL,
-    method varchar(50) DEFAULT 'Cash' NOT NULL,
-    amount decimal(10,2) NOT NULL,
-    transaction_date datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    PRIMARY KEY (id),
-    UNIQUE KEY reference_no (reference_no)
-  ) $charset_collate;");
-
-  dbDelta("CREATE TABLE $table_bookings (
-    id mediumint(9) NOT NULL AUTO_INCREMENT,
-    booking_token varchar(64) NOT NULL,
-    movie_title varchar(255) NOT NULL,
-    auditorium varchar(100) NOT NULL,
-    showtime varchar(50) NOT NULL,
-    ticket_type varchar(50) DEFAULT 'Standard' NOT NULL,
-    seats text NOT NULL,
-    customer_name varchar(150) DEFAULT 'Walk-In Guest' NOT NULL,
-    customer_phone varchar(50) NOT NULL,
-    customer_email varchar(150) NOT NULL,
-    total_amount decimal(10,2) NOT NULL,
-    payment_method varchar(50) DEFAULT 'Cash' NOT NULL,
-    payment_status varchar(50) DEFAULT 'Confirmed' NOT NULL,
-    booking_date datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    PRIMARY KEY (id),
-    UNIQUE KEY booking_token (booking_token)
-  ) $charset_collate;");
-
-  dbDelta("CREATE TABLE $table_customers (
-    id mediumint(9) NOT NULL AUTO_INCREMENT,
-    membership_id varchar(50) NOT NULL,
-    name varchar(150) NOT NULL,
-    email varchar(150) NOT NULL,
-    phone varchar(50) NOT NULL,
-    tier varchar(50) DEFAULT 'VIP CLUB' NOT NULL,
-    total_visits int(11) DEFAULT 1 NOT NULL,
-    reward_points int(11) DEFAULT 50 NOT NULL,
-    created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    PRIMARY KEY (id),
-    UNIQUE KEY membership_id (membership_id)
-  ) $charset_collate;");
-
-  dbDelta("CREATE TABLE $table_staff (
-    id mediumint(9) NOT NULL AUTO_INCREMENT,
-    staff_code varchar(50) NOT NULL,
-    name varchar(150) NOT NULL,
-    role_title varchar(150) NOT NULL,
-    assigned_hall varchar(150) NOT NULL,
-    duty_status varchar(50) DEFAULT 'On Duty' NOT NULL,
-    shift_schedule varchar(100) NOT NULL,
-    phone varchar(50) NOT NULL,
-    email varchar(150) NOT NULL,
-    salary decimal(10,2) DEFAULT '25000.00' NOT NULL,
-    photo_url text NOT NULL,
-    responsibilities text NOT NULL,
-    joined_date date DEFAULT NULL,
-    created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    PRIMARY KEY (id),
-    UNIQUE KEY staff_code (staff_code)
-  ) $charset_collate;");
-
-  // Populate default staff members on first run
-  $staff_exists = $wpdb->get_var("SELECT COUNT(*) FROM $table_staff");
-  if ($staff_exists == 0) {
-    $wpdb->insert($table_staff, array(
-      'staff_code'       => '#STF-1001',
-      'name'             => 'Abdullah Nahian',
-      'role_title'       => 'Master Administrator',
-      'assigned_hall'    => 'All Multiplex Facilities',
-      'duty_status'      => 'On Duty',
-      'shift_schedule'   => 'Full Rotational',
-      'phone'            => '+880 1700-000001',
-      'email'            => 'admin@bigscreencinemas.com',
-      'salary'           => 60000.00,
-      'responsibilities' => 'Full administrative access, box-office accounting supervision, and master show scheduler.'
-    ));
-    $wpdb->insert($table_staff, array(
-      'staff_code'       => '#STF-1002',
-      'name'             => 'Tanvir Ahmed',
-      'role_title'       => 'Chief Projectionist (4K Laser)',
-      'assigned_hall'    => 'Auditorium 1 (23 Seats)',
-      'duty_status'      => 'On Duty',
-      'shift_schedule'   => 'Evening Shift (03:00 PM - 11:30 PM)',
-      'phone'            => '+880 1700-000002',
-      'email'            => 'tanvir@bigscreencinemas.com',
-      'salary'           => 38000.00,
-      'responsibilities' => '4K dual-laser alignment, Christie projector calibration, and Dolby Atmos 128-ch sound balancing.'
-    ));
-    $wpdb->insert($table_staff, array(
-      'staff_code'       => '#STF-1003',
-      'name'             => 'Sayem Chowdhury',
-      'role_title'       => 'Concierge & Box Office Supervisor',
-      'assigned_hall'    => 'Reception & Gate Turnstiles',
-      'duty_status'      => 'On Duty',
-      'shift_schedule'   => 'Day Shift (11:00 AM - 07:00 PM)',
-      'phone'            => '+880 1700-000003',
-      'email'            => 'sayem@bigscreencinemas.com',
-      'salary'           => 28000.00,
-      'responsibilities' => 'Front-of-house ticketing desk, VIP seating concierge, and turnstile badge validation.'
-    ));
-  }
-}
-
-/* ==========================================================================
-   02. MENU & ASSET REGISTRATIONS
-   ========================================================================== */
-add_action('admin_menu', 'bsc_register_master_menu');
+// Master Admin Menu Registration
+add_action( 'admin_menu', 'bsc_register_master_menu', 99 );
 function bsc_register_master_menu() {
-  add_menu_page(
-    __('Movie Theater', 'big-screen-cinemas'),
-    __('Movie Theater', 'big-screen-cinemas'),
-    'manage_options',
-    'bsc-dashboard',
-    'bsc_render_dashboard_page',
-    'dashicons-video-alt3',
-    6
-  );
+    $parent_slug = 'bsc-dashboard';
 
-  add_submenu_page('bsc-dashboard', __('Dashboard', 'big-screen-cinemas'), __('Dashboard', 'big-screen-cinemas'), 'manage_options', 'bsc-dashboard', 'bsc_render_dashboard_page');
-  add_submenu_page('bsc-dashboard', __('Booking Manager', 'big-screen-cinemas'), __('Booking', 'big-screen-cinemas'), 'manage_options', 'bsc-booking', 'bsc_render_booking_page');
-  add_submenu_page('bsc-dashboard', __('Movies & Shows', 'big-screen-cinemas'), __('Movies', 'big-screen-cinemas'), 'manage_options', 'bsc-movies', 'bsc_render_movies_page');
-  add_submenu_page('bsc-dashboard', __('Gallery Manager', 'big-screen-cinemas'), __('Gallery', 'big-screen-cinemas'), 'manage_options', 'bsc-gallery', 'bsc_render_gallery_page');
-  add_submenu_page('bsc-dashboard', __('Customers Directory', 'big-screen-cinemas'), __('Customers', 'big-screen-cinemas'), 'manage_options', 'bsc-customers', 'bsc_render_customers_page');
-  add_submenu_page('bsc-dashboard', __('Financial Accounts', 'big-screen-cinemas'), __('Accounts', 'big-screen-cinemas'), 'manage_options', 'bsc-accounts', 'bsc_render_accounts_page');
-  add_submenu_page('bsc-dashboard', __('Staff & Crew', 'big-screen-cinemas'), __('Users', 'big-screen-cinemas'), 'manage_options', 'bsc-users', 'bsc_render_users_page');
-  add_submenu_page('bsc-dashboard', __('Theater Settings', 'big-screen-cinemas'), __('Settings', 'big-screen-cinemas'), 'manage_options', 'bsc-settings', 'bsc_render_settings_page');
-  add_submenu_page('bsc-dashboard', __('Logout', 'big-screen-cinemas'), __('Logout', 'big-screen-cinemas'), 'manage_options', 'bsc-logout', 'bsc_handle_logout_redirect');
-}
-
-add_action('admin_enqueue_scripts', 'bsc_enqueue_admin_assets');
-function bsc_enqueue_admin_assets($hook) {
-  if (strpos($hook, 'bsc-') === false) {
-    return;
-  }
-  wp_enqueue_media();
-  wp_enqueue_style('bsc-admin-fonts', 'https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@600;700;800&display=swap', array(), null);
-}
-
-// Hide native WordPress admin sidebar and top bar for a clean full-screen experience on bsc- pages
-add_action('admin_head', 'bsc_hide_wp_sidebar_for_cinema_pages');
-function bsc_hide_wp_sidebar_for_cinema_pages() {
-  $screen = get_current_screen();
-  if ($screen && strpos($screen->id, 'bsc-') !== false) {
-    echo '<style>
-      #adminmenumain, #wpadminbar { display: none !important; }
-      #wpcontent { margin-left: 0 !important; padding-left: 0 !important; }
-      #wpfooter { display: none !important; }
-      body.admin-color-fresh { background: #070e11 !important; }
-    </style>';
-  }
-}
-
-function bsc_handle_logout_redirect() {
-  wp_redirect(wp_logout_url(home_url()));
-  exit;
-}
-
-/* ==========================================================================
-   03. FORM POST HANDLERS & REST API
-   ========================================================================== */
-
-// --- Settings Handler (Pricing Tiers Repeater) ---
-add_action('admin_post_bsc_save_settings', 'bsc_handle_save_settings');
-function bsc_handle_save_settings() {
-  if (!current_user_can('manage_options')) wp_die('Unauthorized');
-  check_admin_referer('bsc_save_settings_verify');
-
-  $subtab = sanitize_key($_POST['active_subtab'] ?? 'pricing');
-
-  $pricing_tiers = array();
-  if (!empty($_POST['pricing_titles']) && is_array($_POST['pricing_titles'])) {
-    $titles       = array_map('sanitize_text_field', $_POST['pricing_titles']);
-    $amounts      = array_map('floatval', $_POST['pricing_amounts'] ?? array());
-    $descriptions = array_map('sanitize_text_field', $_POST['pricing_descriptions'] ?? array());
-
-    for ($i = 0; $i < count($titles); $i++) {
-      if (!empty($titles[$i])) {
-        $pricing_tiers[] = array(
-          'title'       => $titles[$i],
-          'amount'      => $amounts[$i] ?? 0.00,
-          'description' => $descriptions[$i] ?? ''
-        );
-      }
-    }
-  }
-  update_option('bsc_pricing_tiers', $pricing_tiers);
-
-  foreach ($pricing_tiers as $tier) {
-    $t_lower = strtolower($tier['title']);
-    if (strpos($t_lower, 'vip') !== false) {
-      update_option('bsc_vip_price', $tier['amount']);
-    } else {
-      update_option('bsc_standard_price', $tier['amount']);
-    }
-  }
-
-  if (isset($_POST['service_charge_pct'])) update_option('bsc_service_charge_pct', floatval($_POST['service_charge_pct']));
-  update_option('bsc_enable_tax', isset($_POST['enable_tax']) ? 'yes' : 'no');
-  if (isset($_POST['seat_hold_timeout'])) update_option('bsc_seat_hold_timeout', intval($_POST['seat_hold_timeout']));
-
-  wp_redirect(admin_url('admin.php?page=bsc-settings&subtab=' . $subtab . '&updated=true'));
-  exit;
-}
-
-// --- Gallery Save Handler ---
-add_action('admin_post_bsc_save_gallery', 'bsc_handle_save_gallery');
-function bsc_handle_save_gallery() {
-  if (!current_user_can('manage_options')) wp_die('Unauthorized');
-  check_admin_referer('bsc_save_gallery_verify');
-
-  $gallery_data = array();
-  if (!empty($_POST['gallery_urls']) && is_array($_POST['gallery_urls'])) {
-    $urls         = array_map('esc_url_raw', $_POST['gallery_urls']);
-    $categories   = array_map('sanitize_text_field', $_POST['gallery_categories'] ?? array());
-    $titles       = array_map('sanitize_text_field', $_POST['gallery_titles'] ?? array());
-    $descriptions = array_map('sanitize_textarea_field', $_POST['gallery_descriptions'] ?? array());
-
-    for ($i = 0; $i < count($urls); $i++) {
-      if (!empty($urls[$i])) {
-        $gallery_data[] = array(
-          'url'         => $urls[$i],
-          'category'    => $categories[$i] ?? 'screens',
-          'title'       => $titles[$i] ?? 'Multiplex Showcase',
-          'description' => $descriptions[$i] ?? ''
-        );
-      }
-    }
-  }
-
-  update_option('bsc_gallery_images', $gallery_data);
-  wp_redirect(admin_url('admin.php?page=bsc-gallery&updated=true'));
-  exit;
-}
-
-// --- Movie CRUD Handlers ---
-add_action('admin_post_bsc_add_movie', 'bsc_handle_add_movie');
-function bsc_handle_add_movie() {
-  if (!current_user_can('manage_options')) wp_die('Unauthorized');
-  check_admin_referer('bsc_add_movie_verify');
-  global $wpdb;
-  $table = $wpdb->prefix . 'bsc_control_movies';
-
-  // Process Cast and Crew Repeater
-  $cast_entries = array();
-  if (!empty($_POST['cast_names']) && is_array($_POST['cast_names'])) {
-    $names  = array_map('sanitize_text_field', $_POST['cast_names']);
-    $roles  = array_map('sanitize_text_field', $_POST['cast_roles'] ?? array());
-    $photos = array_map('esc_url_raw', $_POST['cast_photos'] ?? array());
-
-    for ($i = 0; $i < count($names); $i++) {
-      if (!empty($names[$i])) {
-        $cast_entries[] = array(
-          'name'  => $names[$i],
-          'role'  => $roles[$i] ?? '',
-          'photo' => $photos[$i] ?? 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300&auto=format&fit=crop&q=80'
-        );
-      }
-    }
-  }
-
-  // Process Hierarchical Day & Showtimes Repeater
-  $day_schedules = array();
-  if (!empty($_POST['schedule_days']) && is_array($_POST['schedule_days'])) {
-    foreach ($_POST['schedule_days'] as $day_data) {
-      $clean_date = sanitize_text_field($day_data['date'] ?? current_time('Y-m-d'));
-      $raw_times  = !empty($day_data['times']) && is_array($day_data['times']) ? $day_data['times'] : array('18:00');
-      $clean_times = array_values(array_filter(array_map('sanitize_text_field', $raw_times)));
-
-      if (!empty($clean_date) && !empty($clean_times)) {
-        $day_schedules[] = array(
-          'date'  => $clean_date,
-          'times' => $clean_times
-        );
-      }
-    }
-  }
-  if (empty($day_schedules)) {
-    $day_schedules = array(
-      array(
-        'date'  => current_time('Y-m-d'),
-        'times' => array('18:00')
-      )
+    add_menu_page(
+        __( 'Movie Theater', 'bsc-cinema-manager' ),
+        __( 'Movie Theater', 'bsc-cinema-manager' ),
+        BSC_ADMIN_CAP,
+        $parent_slug,
+        'bsc_render_dashboard_page',
+        'dashicons-video-alt3',
+        6
     );
-  }
 
-  // Release Date (Single official theatrical date)
-  $release_date_val = sanitize_text_field($_POST['movie_release_date'] ?? current_time('Y-m-d'));
-
-  $wpdb->insert($table, array(
-    'title'             => sanitize_text_field($_POST['movie_title']),
-    'category'          => sanitize_text_field($_POST['movie_category']),
-    'genre'             => sanitize_text_field($_POST['movie_genre']),
-    'duration'          => sanitize_text_field($_POST['movie_duration']),
-    'rating'            => sanitize_text_field($_POST['movie_rating']),
-    'age_rating'        => sanitize_text_field($_POST['movie_age_rating']),
-    'audio_language'    => sanitize_text_field($_POST['movie_audio_lang']),
-    'director'          => sanitize_text_field($_POST['movie_director']),
-    'writers'           => sanitize_text_field($_POST['movie_writers']),
-    'auditorium'        => sanitize_text_field($_POST['movie_auditorium']),
-    'showtimes'         => wp_json_encode($day_schedules),
-    'poster_url'        => esc_url_raw($_POST['movie_poster']),
-    'trailer_url'       => esc_url_raw($_POST['movie_trailer']),
-    'badge_tag'         => sanitize_text_field($_POST['movie_badge']),
-    'release_date'      => $release_date_val,
-    'short_description' => sanitize_textarea_field($_POST['movie_short_desc']),
-    'synopsis'          => wp_kses_post($_POST['movie_synopsis']),
-    'cast_crew'         => wp_json_encode($cast_entries)
-  ));
-
-  wp_redirect(admin_url('admin.php?page=bsc-movies&subtab=all&movie_added=true'));
-  exit;
+    add_submenu_page( $parent_slug, __( 'Dashboard', 'bsc-cinema-manager' ), __( 'Dashboard', 'bsc-cinema-manager' ), BSC_ADMIN_CAP, 'bsc-dashboard', 'bsc_render_dashboard_page' );
+    add_submenu_page( $parent_slug, __( 'Booking Manager', 'bsc-cinema-manager' ), __( 'Booking', 'bsc-cinema-manager' ), BSC_ADMIN_CAP, 'bsc-booking', 'bsc_render_booking_page' );
+    add_submenu_page( $parent_slug, __( 'Movies & Shows', 'bsc-cinema-manager' ), __( 'Movies', 'bsc-cinema-manager' ), BSC_ADMIN_CAP, 'bsc-movies', 'bsc_render_movies_page' );
+    add_submenu_page( $parent_slug, __( 'Gallery Manager', 'bsc-cinema-manager' ), __( 'Gallery', 'bsc-cinema-manager' ), BSC_ADMIN_CAP, 'bsc-gallery', 'bsc_render_gallery_page' );
+    add_submenu_page( $parent_slug, __( 'Customers Directory', 'bsc-cinema-manager' ), __( 'Customers', 'bsc-cinema-manager' ), BSC_ADMIN_CAP, 'bsc-customers', 'bsc_render_customers_page' );
+    add_submenu_page( $parent_slug, __( 'Financial Accounts', 'bsc-cinema-manager' ), __( 'Accounts', 'bsc-cinema-manager' ), BSC_ADMIN_CAP, 'bsc-accounts', 'bsc_render_accounts_page' );
+    add_submenu_page( $parent_slug, __( 'Staff & Crew', 'bsc-cinema-manager' ), __( 'Users', 'bsc-cinema-manager' ), BSC_ADMIN_CAP, 'bsc-users', 'bsc_render_users_page' );
+    add_submenu_page( $parent_slug, __( 'Theater Settings', 'bsc-cinema-manager' ), __( 'Settings', 'bsc-cinema-manager' ), BSC_ADMIN_CAP, 'bsc-settings', 'bsc_render_settings_page' );
+    add_submenu_page( $parent_slug, __( 'Sign Out', 'bsc-cinema-manager' ), '<span style="color:#ef4444;">🚪 ' . esc_html__( 'Logout', 'bsc-cinema-manager' ) . '</span>', BSC_ADMIN_CAP, 'bsc-logout', 'bsc_handle_logout_screen' );
 }
 
-add_action('admin_post_bsc_edit_movie', 'bsc_handle_edit_movie');
-function bsc_handle_edit_movie() {
-  if (!current_user_can('manage_options')) wp_die('Unauthorized');
-  check_admin_referer('bsc_edit_movie_verify');
-  global $wpdb;
-  $table = $wpdb->prefix . 'bsc_control_movies';
-  $movie_id = intval($_POST['movie_id'] ?? 0);
+function bsc_handle_logout_screen() {
+    $logout_url = wp_logout_url( home_url() );
+    ?>
+    <script type="text/javascript">
+        window.location.href = <?php echo wp_json_encode( $logout_url ); ?>;
+    </script>
+    <div class="wrap" style="padding: 40px; color: #fff; font-family: sans-serif;">
+        <p><?php esc_html_e( 'Logging out of Big Screen Cinemas...', 'bsc-cinema-manager' ); ?></p>
+        <p><a href="<?php echo esc_url( $logout_url ); ?>" class="button button-primary"><?php esc_html_e( 'Click here if you are not redirected automatically', 'bsc-cinema-manager' ); ?></a></p>
+    </div>
+    <?php
+}
 
-  if ($movie_id <= 0) {
-    wp_die('Invalid Movie Identifier');
-  }
-
-  // Process Cast and Crew Repeater
-  $cast_entries = array();
-  if (!empty($_POST['cast_names']) && is_array($_POST['cast_names'])) {
-    $names  = array_map('sanitize_text_field', $_POST['cast_names']);
-    $roles  = array_map('sanitize_text_field', $_POST['cast_roles'] ?? array());
-    $photos = array_map('esc_url_raw', $_POST['cast_photos'] ?? array());
-
-    for ($i = 0; $i < count($names); $i++) {
-      if (!empty($names[$i])) {
-        $cast_entries[] = array(
-          'name'  => $names[$i],
-          'role'  => $roles[$i] ?? '',
-          'photo' => $photos[$i] ?? 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300&auto=format&fit=crop&q=80'
-        );
-      }
+function bsc_is_cinema_screen() {
+    if ( ! is_admin() ) {
+        return false;
     }
-  }
+    $page = isset( $_GET['page'] ) ? sanitize_key( $_GET['page'] ) : '';
+    return ( 0 === strpos( $page, 'bsc-' ) );
+}
 
-  // Process Hierarchical Day & Showtimes Repeater
-  $day_schedules = array();
-  if (!empty($_POST['schedule_days']) && is_array($_POST['schedule_days'])) {
-    foreach ($_POST['schedule_days'] as $day_data) {
-      $clean_date = sanitize_text_field($day_data['date'] ?? current_time('Y-m-d'));
-      $raw_times  = !empty($day_data['times']) && is_array($day_data['times']) ? $day_data['times'] : array('18:00');
-      $clean_times = array_values(array_filter(array_map('sanitize_text_field', $raw_times)));
-
-      if (!empty($clean_date) && !empty($clean_times)) {
-        $day_schedules[] = array(
-          'date'  => $clean_date,
-          'times' => $clean_times
-        );
-      }
+add_action( 'admin_enqueue_scripts', 'bsc_enqueue_admin_assets' );
+function bsc_enqueue_admin_assets( $hook ) {
+    if ( ! bsc_is_cinema_screen() ) {
+        return;
     }
-  }
-  if (empty($day_schedules)) {
-    $day_schedules = array(
-      array(
-        'date'  => current_time('Y-m-d'),
-        'times' => array('18:00')
-      )
+
+    wp_enqueue_media();
+    wp_enqueue_style(
+        'bsc-admin-fonts',
+        'https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap',
+        array(),
+        null
     );
-  }
 
-  // Release Date (Single official theatrical date)
-  $release_date_val = sanitize_text_field($_POST['movie_release_date'] ?? current_time('Y-m-d'));
-
-  $wpdb->update($table, array(
-    'title'             => sanitize_text_field($_POST['movie_title']),
-    'category'          => sanitize_text_field($_POST['movie_category']),
-    'genre'             => sanitize_text_field($_POST['movie_genre']),
-    'duration'          => sanitize_text_field($_POST['movie_duration']),
-    'rating'            => sanitize_text_field($_POST['movie_rating']),
-    'age_rating'        => sanitize_text_field($_POST['movie_age_rating']),
-    'audio_language'    => sanitize_text_field($_POST['movie_audio_lang']),
-    'director'          => sanitize_text_field($_POST['movie_director']),
-    'writers'           => sanitize_text_field($_POST['movie_writers']),
-    'auditorium'        => sanitize_text_field($_POST['movie_auditorium']),
-    'showtimes'         => wp_json_encode($day_schedules),
-    'poster_url'        => esc_url_raw($_POST['movie_poster']),
-    'trailer_url'       => esc_url_raw($_POST['movie_trailer']),
-    'badge_tag'         => sanitize_text_field($_POST['movie_badge']),
-    'release_date'      => $release_date_val,
-    'short_description' => sanitize_textarea_field($_POST['movie_short_desc']),
-    'synopsis'          => wp_kses_post($_POST['movie_synopsis']),
-    'cast_crew'         => wp_json_encode($cast_entries)
-  ), array('id' => $movie_id));
-
-  wp_redirect(admin_url('admin.php?page=bsc-movies&subtab=all&movie_updated=true'));
-  exit;
+    wp_register_style( 'bsc-unified-admin', false );
+    wp_enqueue_style( 'bsc-unified-admin' );
+    wp_add_inline_style( 'bsc-unified-admin', '
+        .bsc-admin-wrap { margin-top: 20px; font-family: "Plus Jakarta Sans", sans-serif; }
+        .bsc-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 24px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+        .bsc-card h2 { margin-top: 0; font-family: "Space Grotesk", sans-serif; font-size: 1.5rem; color: #0f172a; }
+        .bsc-empty-state { background: #f8fafc; border: 2px dashed #cbd5e1; border-radius: 6px; padding: 40px; text-align: center; }
+    ' );
 }
 
-add_action('admin_post_bsc_delete_movie', 'bsc_handle_delete_movie');
-function bsc_handle_delete_movie() {
-  if (!current_user_can('manage_options')) wp_die('Unauthorized');
-  $movie_id = intval($_GET['id'] ?? 0);
-  check_admin_referer('bsc_delete_movie_' . $movie_id);
-
-  global $wpdb;
-  $table = $wpdb->prefix . 'bsc_control_movies';
-  $wpdb->delete($table, array('id' => $movie_id));
-
-  wp_redirect(admin_url('admin.php?page=bsc-movies&subtab=all&movie_deleted=true'));
-  exit;
-}
-
-// --- Customer CRUD Handlers ---
-add_action('admin_post_bsc_add_customer', 'bsc_handle_add_customer');
-function bsc_handle_add_customer() {
-  if (!current_user_can('manage_options')) wp_die('Unauthorized');
-  check_admin_referer('bsc_add_customer_verify');
-  global $wpdb;
-  $table = $wpdb->prefix . 'bsc_customers';
-
-  $wpdb->insert($table, array(
-    'membership_id' => '#BSC-' . rand(10000, 99999),
-    'name'          => sanitize_text_field($_POST['customer_name'] ?? ''),
-    'email'         => sanitize_email($_POST['customer_email'] ?? ''),
-    'phone'         => sanitize_text_field($_POST['customer_phone'] ?? ''),
-    'tier'          => sanitize_text_field($_POST['customer_tier'] ?? 'VIP CLUB'),
-    'total_visits'  => intval($_POST['total_visits'] ?? 1),
-    'reward_points' => intval($_POST['reward_points'] ?? 100),
-  ));
-
-  wp_redirect(admin_url('admin.php?page=bsc-customers&subtab=all&customer_added=true'));
-  exit;
-}
-
-add_action('admin_post_bsc_edit_customer', 'bsc_handle_edit_customer');
-function bsc_handle_edit_customer() {
-  if (!current_user_can('manage_options')) wp_die('Unauthorized');
-  check_admin_referer('bsc_edit_customer_verify');
-  global $wpdb;
-  $table = $wpdb->prefix . 'bsc_customers';
-  $id    = intval($_POST['customer_id'] ?? 0);
-
-  if ($id <= 0) wp_die('Invalid customer ID');
-
-  $wpdb->update($table, array(
-    'name'          => sanitize_text_field($_POST['customer_name'] ?? ''),
-    'email'         => sanitize_email($_POST['customer_email'] ?? ''),
-    'phone'         => sanitize_text_field($_POST['customer_phone'] ?? ''),
-    'tier'          => sanitize_text_field($_POST['customer_tier'] ?? 'VIP CLUB'),
-    'total_visits'  => intval($_POST['total_visits'] ?? 1),
-    'reward_points' => intval($_POST['reward_points'] ?? 100),
-  ), array('id' => $id));
-
-  wp_redirect(admin_url('admin.php?page=bsc-customers&subtab=all&customer_updated=true'));
-  exit;
-}
-
-add_action('admin_post_bsc_delete_customer', 'bsc_handle_delete_customer');
-function bsc_handle_delete_customer() {
-  if (!current_user_can('manage_options')) wp_die('Unauthorized');
-  $id = intval($_GET['id'] ?? 0);
-  check_admin_referer('bsc_delete_customer_' . $id);
-
-  global $wpdb;
-  $table = $wpdb->prefix . 'bsc_customers';
-  $wpdb->delete($table, array('id' => $id));
-
-  wp_redirect(admin_url('admin.php?page=bsc-customers&subtab=all&customer_deleted=true'));
-  exit;
-}
-
-// --- Accounts / Expense & Direct Revenue CRUD Handlers ---
-add_action('admin_post_bsc_add_income', 'bsc_handle_add_income');
-function bsc_handle_add_income() {
-  if (!current_user_can('manage_options')) wp_die('Unauthorized');
-  check_admin_referer('bsc_add_income_verify');
-  global $wpdb;
-  $table_ledger = $wpdb->prefix . 'bsc_ledger';
-
-  $particulars = sanitize_text_field($_POST['income_particulars'] ?? 'Direct Revenue');
-  $category    = sanitize_text_field($_POST['income_category'] ?? 'Concessions & F&B');
-  $method      = sanitize_text_field($_POST['income_method'] ?? 'Cash');
-  $amount      = floatval($_POST['income_amount'] ?? 0.00);
-  $token       = '#INC-' . rand(1000, 9999) . '-TX';
-
-  if ($amount <= 0) {
-    wp_die('Invalid income amount entered.');
-  }
-
-  $wpdb->insert($table_ledger, array(
-    'reference_no' => $token,
-    'txn_type'     => 'Income',
-    'particulars'  => '[' . $category . '] ' . $particulars,
-    'method'       => $method,
-    'amount'       => $amount
-  ));
-
-  wp_redirect(admin_url('admin.php?page=bsc-accounts&subtab=income&income_added=true'));
-  exit;
-}
-
-add_action('admin_post_bsc_add_expense', 'bsc_handle_add_expense');
-function bsc_handle_add_expense() {
-  if (!current_user_can('manage_options')) wp_die('Unauthorized');
-  check_admin_referer('bsc_add_expense_verify');
-  global $wpdb;
-  $table_ledger = $wpdb->prefix . 'bsc_ledger';
-
-  $particulars = sanitize_text_field($_POST['expense_particulars'] ?? 'Operating Expense');
-  $category    = sanitize_text_field($_POST['expense_category'] ?? 'General');
-  $method      = sanitize_text_field($_POST['expense_method'] ?? 'Cash');
-  $amount      = floatval($_POST['expense_amount'] ?? 0.00);
-  $token       = '#EXP-' . rand(1000, 9999) . '-TX';
-
-  if ($amount <= 0) {
-    wp_die('Invalid expense amount entered.');
-  }
-
-  $wpdb->insert($table_ledger, array(
-    'reference_no' => $token,
-    'txn_type'     => 'Expense',
-    'particulars'  => '[' . $category . '] ' . $particulars,
-    'method'       => $method,
-    'amount'       => $amount
-  ));
-
-  wp_redirect(admin_url('admin.php?page=bsc-accounts&subtab=expense&expense_added=true'));
-  exit;
-}
-
-add_action('admin_post_bsc_delete_ledger_item', 'bsc_handle_delete_ledger_item');
-function bsc_handle_delete_ledger_item() {
-  if (!current_user_can('manage_options')) wp_die('Unauthorized');
-  $id = intval($_GET['id'] ?? 0);
-  check_admin_referer('bsc_delete_ledger_' . $id);
-
-  global $wpdb;
-  $table_ledger = $wpdb->prefix . 'bsc_ledger';
-  $wpdb->delete($table_ledger, array('id' => $id));
-
-  wp_redirect(admin_url('admin.php?page=bsc-accounts&subtab=expense&deleted=true'));
-  exit;
-}
-
-// --- Staff & Crew CRUD Handlers ---
-add_action('admin_post_bsc_add_staff', 'bsc_handle_add_staff');
-function bsc_handle_add_staff() {
-  if (!current_user_can('manage_options')) wp_die('Unauthorized');
-  check_admin_referer('bsc_add_staff_verify');
-  global $wpdb;
-  $table = $wpdb->prefix . 'bsc_staff_crew';
-
-  $wpdb->insert($table, array(
-    'staff_code'       => '#STF-' . rand(1000, 9999),
-    'name'             => sanitize_text_field($_POST['staff_name'] ?? ''),
-    'role_title'       => sanitize_text_field($_POST['staff_role'] ?? 'Operations Crew'),
-    'assigned_hall'    => sanitize_text_field($_POST['assigned_hall'] ?? 'All Multiplex Facilities'),
-    'duty_status'      => sanitize_text_field($_POST['duty_status'] ?? 'On Duty'),
-    'shift_schedule'   => sanitize_text_field($_POST['shift_schedule'] ?? 'Full Rotational'),
-    'phone'            => sanitize_text_field($_POST['staff_phone'] ?? ''),
-    'email'            => sanitize_email($_POST['staff_email'] ?? ''),
-    'salary'           => floatval($_POST['staff_salary'] ?? 25000.00),
-    'photo_url'        => esc_url_raw($_POST['photo_url'] ?? ''),
-    'responsibilities' => sanitize_textarea_field($_POST['responsibilities'] ?? ''),
-    'joined_date'      => current_time('Y-m-d')
-  ));
-
-  wp_redirect(admin_url('admin.php?page=bsc-users&subtab=all&staff_added=true'));
-  exit;
-}
-
-add_action('admin_post_bsc_edit_staff', 'bsc_handle_edit_staff');
-function bsc_handle_edit_staff() {
-  if (!current_user_can('manage_options')) wp_die('Unauthorized');
-  check_admin_referer('bsc_edit_staff_verify');
-  global $wpdb;
-  $table = $wpdb->prefix . 'bsc_staff_crew';
-  $id    = intval($_POST['staff_id'] ?? 0);
-
-  if ($id <= 0) wp_die('Invalid staff identifier.');
-
-  $wpdb->update($table, array(
-    'name'             => sanitize_text_field($_POST['staff_name'] ?? ''),
-    'role_title'       => sanitize_text_field($_POST['staff_role'] ?? 'Operations Crew'),
-    'assigned_hall'    => sanitize_text_field($_POST['assigned_hall'] ?? 'All Multiplex Facilities'),
-    'duty_status'      => sanitize_text_field($_POST['duty_status'] ?? 'On Duty'),
-    'shift_schedule'   => sanitize_text_field($_POST['shift_schedule'] ?? 'Full Rotational'),
-    'phone'            => sanitize_text_field($_POST['staff_phone'] ?? ''),
-    'email'            => sanitize_email($_POST['staff_email'] ?? ''),
-    'salary'           => floatval($_POST['staff_salary'] ?? 25000.00),
-    'photo_url'        => esc_url_raw($_POST['photo_url'] ?? ''),
-    'responsibilities' => sanitize_textarea_field($_POST['responsibilities'] ?? '')
-  ), array('id' => $id));
-
-  wp_redirect(admin_url('admin.php?page=bsc-users&subtab=all&staff_updated=true'));
-  exit;
-}
-
-add_action('admin_post_bsc_delete_staff', 'bsc_handle_delete_staff');
-function bsc_handle_delete_staff() {
-  if (!current_user_can('manage_options')) wp_die('Unauthorized');
-  $id = intval($_GET['id'] ?? 0);
-  check_admin_referer('bsc_delete_staff_' . $id);
-
-  global $wpdb;
-  $table = $wpdb->prefix . 'bsc_staff_crew';
-  $wpdb->delete($table, array('id' => $id));
-
-  wp_redirect(admin_url('admin.php?page=bsc-users&subtab=all&staff_deleted=true'));
-  exit;
-}
-
-// --- Manual Booking Handler (Cash or bKash) ---
-add_action('admin_post_bsc_manual_booking', 'bsc_handle_manual_booking');
-function bsc_handle_manual_booking() {
-  if (!current_user_can('manage_options')) wp_die('Unauthorized');
-  check_admin_referer('bsc_manual_booking_verify');
-  global $wpdb;
-  $table_bookings  = $wpdb->prefix . 'bsc_bookings';
-  $table_ledger    = $wpdb->prefix . 'bsc_ledger';
-  $table_customers = $wpdb->prefix . 'bsc_customers';
-
-  $movie        = sanitize_text_field($_POST['manual_movie'] ?? 'Feature Presentation');
-  $booking_date = sanitize_text_field($_POST['manual_booking_date'] ?? current_time('Y-m-d'));
-  $showtime     = sanitize_text_field($_POST['manual_showtime'] ?? '18:00');
-  $ticket_type  = sanitize_text_field($_POST['manual_ticket_type'] ?? 'Standard');
-  $audit        = sanitize_text_field($_POST['manual_audit'] ?? 'Auditorium 1 (23 Seats)');
-  $seats        = sanitize_text_field($_POST['manual_seats'] ?? '');
-  $amount       = floatval($_POST['manual_amount'] ?? 0.00);
-  $method       = sanitize_text_field($_POST['payment_method'] ?? 'Cash');
-  $cust_name    = sanitize_text_field($_POST['customer_name'] ?? 'Walk-In Guest');
-  $cust_phone   = sanitize_text_field($_POST['customer_phone'] ?? '');
-  $cust_email   = sanitize_email($_POST['customer_email'] ?? '');
-  $token        = '#BSC-' . rand(1000, 9999) . '-TX';
-
-  if (empty($seats)) {
-    wp_die('Error: Please choose at least one seat from the seat map.');
-  }
-
-  $status_label = ($method === 'bKash') ? 'bKash Paid' : 'Counter Cash';
-
-  $wpdb->insert($table_bookings, array(
-    'booking_token'  => $token,
-    'movie_title'    => $movie,
-    'auditorium'     => $audit,
-    'showtime'       => $showtime,
-    'ticket_type'    => ucfirst($ticket_type),
-    'seats'          => $seats,
-    'customer_name'  => $cust_name,
-    'customer_phone' => $cust_phone,
-    'customer_email' => $cust_email,
-    'total_amount'   => $amount,
-    'payment_method' => $method,
-    'payment_status' => $status_label,
-    'booking_date'   => $booking_date . ' ' . current_time('H:i:s')
-  ));
-
-  $wpdb->insert($table_ledger, array(
-    'reference_no' => $token,
-    'txn_type'     => 'Income',
-    'particulars'  => 'Walk-In: ' . $movie . ' (' . $cust_name . ' - Seats: ' . $seats . ')',
-    'method'       => $method,
-    'amount'       => $amount
-  ));
-
-  if (!empty($cust_email) || !empty($cust_phone)) {
-    $existing = $wpdb->get_row($wpdb->prepare(
-      "SELECT * FROM $table_customers WHERE (email = %s AND email != '') OR (phone = %s AND phone != '') LIMIT 1",
-      $cust_email,
-      $cust_phone
-    ));
-
-    if ($existing) {
-      $wpdb->query($wpdb->prepare(
-        "UPDATE $table_customers SET total_visits = total_visits + 1, reward_points = reward_points + 100 WHERE id = %d",
-        $existing->id
-      ));
-    } else {
-      $membership = '#BSC-' . rand(10000, 99999);
-      $wpdb->insert($table_customers, array(
-        'membership_id' => $membership,
-        'name'          => $cust_name,
-        'email'         => $cust_email,
-        'phone'         => $cust_phone,
-        'tier'          => ($ticket_type === 'vip') ? 'VIP CLUB' : 'STANDARD',
-        'total_visits'  => 1,
-        'reward_points' => 100
-      ));
+add_action( 'admin_head', 'bsc_apply_cinema_mode_css' );
+function bsc_apply_cinema_mode_css() {
+    if ( ! bsc_is_cinema_screen() ) {
+        return;
     }
-  }
-
-  wp_redirect(admin_url('admin.php?page=bsc-booking&subtab=all&booking_added=true'));
-  exit;
-}
-
-// --- Frontend Public Checkout Handler (admin-post.php) ---
-add_action('admin_post_nopriv_bsc_process_frontend_checkout', 'bsc_handle_frontend_checkout');
-add_action('admin_post_bsc_process_frontend_checkout', 'bsc_handle_frontend_checkout');
-function bsc_handle_frontend_checkout() {
-    if (!isset($_POST['bsc_checkout_nonce']) || !wp_verify_nonce($_POST['bsc_checkout_nonce'], 'bsc_frontend_checkout_verify')) {
-        wp_die(__('Security verification failed. Please go back and try again.', 'big-screen-cinemas'), __('Checkout Error', 'big-screen-cinemas'), array('response' => 403));
-    }
-
-    global $wpdb;
-    $table_bookings  = $wpdb->prefix . 'bsc_bookings';
-    $table_ledger    = $wpdb->prefix . 'bsc_ledger';
-    $table_customers = $wpdb->prefix . 'bsc_customers';
-
-    $movie        = sanitize_text_field($_POST['movie_title'] ?? 'Feature Presentation');
-    $audit        = sanitize_text_field($_POST['auditorium'] ?? 'Auditorium 1 (23 Seats)');
-    $seats        = sanitize_text_field($_POST['seats'] ?? 'A1');
-    $amount       = floatval($_POST['total_amount'] ?? 525.00);
-    $method       = sanitize_text_field($_POST['payment_method'] ?? 'bKash');
-    $cust_name    = sanitize_text_field($_POST['customer_name'] ?? 'Online Guest');
-    $cust_phone   = sanitize_text_field($_POST['customer_phone'] ?? '');
-    $cust_email   = sanitize_email($_POST['customer_email'] ?? '');
-    $booking_date = sanitize_text_field($_POST['screening_date'] ?? current_time('Y-m-d'));
-    $showtime     = sanitize_text_field($_POST['screening_time'] ?? '18:00');
-    $token        = '#BSC-' . rand(1000, 9999) . '-TX';
-
-    if (empty($seats)) {
-        wp_die(__('Error: No seats selected for reservation.', 'big-screen-cinemas'));
-    }
-
-    $wpdb->insert($table_bookings, array(
-        'booking_token'  => $token,
-        'movie_title'    => $movie,
-        'auditorium'     => $audit,
-        'showtime'       => $showtime,
-        'ticket_type'    => 'Standard',
-        'seats'          => $seats,
-        'customer_name'  => $cust_name,
-        'customer_phone' => $cust_phone,
-        'customer_email' => $cust_email,
-        'total_amount'   => $amount,
-        'payment_method' => $method,
-        'payment_status' => 'Confirmed Online',
-        'booking_date'   => $booking_date . ' ' . current_time('H:i:s')
-    ));
-
-    $wpdb->insert($table_ledger, array(
-        'reference_no' => $token,
-        'txn_type'     => 'Income',
-        'particulars'  => 'Online Ticket: ' . $movie . ' (Seats: ' . $seats . ')',
-        'method'       => $method,
-        'amount'       => $amount
-    ));
-
-    if (!empty($cust_email) || !empty($cust_phone)) {
-        $existing = $wpdb->get_row($wpdb->prepare(
-            "SELECT * FROM $table_customers WHERE (email = %s AND email != '') OR (phone = %s AND phone != '') LIMIT 1",
-            $cust_email,
-            $cust_phone
-        ));
-
-        if ($existing) {
-            $wpdb->query($wpdb->prepare(
-                "UPDATE $table_customers SET total_visits = total_visits + 1, reward_points = reward_points + 100 WHERE id = %d",
-                $existing->id
-            ));
-        } else {
-            $membership = '#BSC-' . rand(10000, 99999);
-            $wpdb->insert($table_customers, array(
-                'membership_id' => $membership,
-                'name'          => $cust_name,
-                'email'         => $cust_email,
-                'phone'         => $cust_phone,
-                'tier'          => 'VIP CLUB',
-                'total_visits'  => 1,
-                'reward_points' => 100
-            ));
+    ?>
+    <style id="bsc-cinema-fullscreen-styles">
+        #adminmenumain,
+        #adminmenuback,
+        #adminmenuwrap,
+        #wpadminbar,
+        #wpfooter {
+            display: none !important;
         }
-    }
-
-    $thank_you_url = add_query_arg(array(
-        'token' => $token,
-        'name'  => urlencode($cust_name),
-        'movie' => urlencode($movie),
-        'seats' => urlencode($seats),
-        'total' => $amount
-    ), home_url('/thank-you/'));
-
-    wp_redirect($thank_you_url);
-    exit;
+        html.wp-toolbar {
+            padding-top: 0 !important;
+        }
+        #wpcontent,
+        #wpbody-content {
+            margin-left: 0 !important;
+            padding: 0 !important;
+            min-height: 100vh !important;
+        }
+        body.wp-admin {
+            background: #070e11 !important;
+            overflow-x: hidden;
+        }
+        .bsc-floating-escape-btn {
+            position: fixed !important;
+            bottom: 18px !important;
+            left: 18px !important;
+            right: auto !important;
+            z-index: 99999 !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 8px !important;
+            background: #0f172a !important;
+            color: #f8fafc !important;
+            padding: 8px 14px !important;
+            border-radius: 8px !important;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, sans-serif !important;
+            font-size: 12px !important;
+            font-weight: 600 !important;
+            text-decoration: none !important;
+            border: 1px solid rgba(255, 255, 255, 0.15) !important;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.6), 0 8px 10px -6px rgba(0, 0, 0, 0.6) !important;
+            backdrop-filter: blur(8px) !important;
+            cursor: pointer !important;
+            transition: all 0.2s ease-in-out !important;
+        }
+        .bsc-floating-escape-btn:hover {
+            background: #1e293b !important;
+            color: #38bdf8 !important;
+            border-color: #38bdf8 !important;
+            transform: translateY(-2px) !important;
+        }
+        .bsc-floating-escape-btn svg {
+            width: 15px;
+            height: 15px;
+            fill: currentColor;
+        }
+    </style>
+    <?php
 }
 
-/* ==========================================================================
-   04. CUSTOM AUTHENTICATION, REGISTRATION & FULL-SCREEN LOGIN REDIRECT
-   ========================================================================== */
+// Custom /a/admin routing
+add_action( 'init', 'bsc_handle_custom_admin_slug' );
+function bsc_handle_custom_admin_slug() {
+    $request_uri = untrailingslashit( strtok( $_SERVER['REQUEST_URI'] ?? '', '?' ) );
 
-// --- Handle Custom Sign In ---
-add_action('admin_post_nopriv_bsc_custom_login', 'bsc_handle_custom_login');
-add_action('admin_post_bsc_custom_login', 'bsc_handle_custom_login');
+    if ( '/a/admin' === $request_uri ) {
+        if ( is_user_logged_in() ) {
+            wp_safe_redirect( admin_url( 'admin.php?page=bsc-dashboard' ) );
+        } else {
+            wp_safe_redirect( wp_login_url( admin_url( 'admin.php?page=bsc-dashboard' ) ) );
+        }
+        exit;
+    }
+}
+
+// Authentication & Profile Hooks
+add_action( 'admin_post_nopriv_bsc_custom_login', 'bsc_handle_custom_login' );
+add_action( 'admin_post_bsc_custom_login', 'bsc_handle_custom_login' );
 function bsc_handle_custom_login() {
     $creds = array(
-        'user_login'    => sanitize_text_field($_POST['log'] ?? ''),
+        'user_login'    => sanitize_text_field( wp_unslash( $_POST['log'] ?? '' ) ),
         'user_password' => $_POST['pwd'] ?? '',
-        'remember'      => isset($_POST['rememberme'])
+        'remember'      => ! empty( $_POST['rememberme'] ),
     );
 
-    $user = wp_signon($creds, false);
+    $user = wp_signon( $creds, is_ssl() );
 
-    if (is_wp_error($user)) {
-        $login_page = home_url('/login/');
-        wp_redirect(add_query_arg('login', 'failed', $login_page));
+    if ( is_wp_error( $user ) ) {
+        $login_page = home_url( '/account/' );
+        wp_safe_redirect( add_query_arg( 'login', 'failed', $login_page ) );
         exit;
     }
 
-    $redirect_url = !empty($_POST['redirect_to']) ? esc_url_raw($_POST['redirect_to']) : home_url('/account/');
-    wp_redirect($redirect_url);
+    $redirect_url = ! empty( $_POST['redirect_to'] ) ? esc_url_raw( wp_unslash( $_POST['redirect_to'] ) ) : home_url( '/account/' );
+    wp_safe_redirect( $redirect_url );
     exit;
 }
 
-// --- Force Full-Screen Dashboard Redirection on WP Login ---
-add_filter('login_redirect', 'bsc_full_screen_login_redirect', 10, 3);
-function bsc_full_screen_login_redirect($redirect_to, $request, $user) {
-  if (isset($user->roles) && is_array($user->roles)) {
-    if (in_array('administrator', $user->roles) || in_array('manage_options', $user->caps ?? array())) {
-      return admin_url('admin.php?page=bsc-dashboard');
+add_filter( 'login_redirect', 'bsc_full_screen_login_redirect', 99, 3 );
+function bsc_full_screen_login_redirect( $redirect_to, $request, $user ) {
+    if ( $user instanceof WP_User && user_can( $user, BSC_ADMIN_CAP ) ) {
+        if ( ! empty( $request ) && false !== strpos( $request, 'wp-admin' ) ) {
+            return $request;
+        }
+        return admin_url( 'admin.php?page=bsc-dashboard' );
     }
-  }
-  return admin_url('admin.php?page=bsc-dashboard');
+    return ! empty( $request ) ? $request : home_url( '/account/' );
 }
 
-// --- Handle Custom Registration ---
-add_action('admin_post_nopriv_bsc_custom_register', 'bsc_handle_custom_register');
-add_action('admin_post_bsc_custom_register', 'bsc_handle_custom_register');
+add_action( 'admin_post_nopriv_bsc_custom_register', 'bsc_handle_custom_register' );
+add_action( 'admin_post_bsc_custom_register', 'bsc_handle_custom_register' );
 function bsc_handle_custom_register() {
-    global $wpdb;
-    $table_customers = $wpdb->prefix . 'bsc_customers';
+    $name         = sanitize_text_field( wp_unslash( $_POST['reg_name'] ?? '' ) );
+    $email        = sanitize_email( wp_unslash( $_POST['reg_email'] ?? '' ) );
+    $phone        = sanitize_text_field( wp_unslash( $_POST['reg_phone'] ?? '' ) );
+    $password     = $_POST['reg_pass'] ?? '';
+    $redirect_to  = ! empty( $_POST['redirect_to'] ) ? esc_url_raw( wp_unslash( $_POST['redirect_to'] ) ) : home_url( '/account/' );
 
-    $name     = sanitize_text_field($_POST['reg_name'] ?? '');
-    $email    = sanitize_email($_POST['reg_email'] ?? '');
-    $password = $_POST['reg_pass'] ?? '';
-
-    if (empty($email) || empty($password) || empty($name)) {
-        wp_die('Please fill out all required registration fields.');
+    if ( empty( $email ) || empty( $password ) || empty( $name ) ) {
+        wp_safe_redirect( home_url( '/account/?register=missing_fields' ) );
+        exit;
     }
 
-    if (email_exists($email) || username_exists($email)) {
-        wp_die('An account with this email address already exists. Please sign in.');
+    if ( email_exists( $email ) || username_exists( $email ) ) {
+        $login_page = home_url( '/account/' );
+        wp_safe_redirect( add_query_arg( 'register', 'exists', $login_page ) );
+        exit;
     }
 
-    $user_id = wp_create_user($email, $password, $email);
-    if (is_wp_error($user_id)) {
-        wp_die($user_id->get_error_message());
+    $user_id = wp_create_user( $email, $password, $email );
+    if ( is_wp_error( $user_id ) ) {
+        wp_safe_redirect( home_url( '/account/?register=error' ) );
+        exit;
     }
 
-    update_user_meta($user_id, 'first_name', $name);
+    wp_update_user( array(
+        'ID'           => $user_id,
+        'display_name' => $name,
+        'first_name'   => $name,
+    ) );
 
-    $membership_id = '#BSC-' . rand(10000, 99999);
-    $wpdb->insert($table_customers, array(
-        'membership_id' => $membership_id,
-        'name'          => $name,
-        'email'         => $email,
-        'phone'         => '',
-        'tier'          => 'VIP CLUB',
-        'total_visits'  => 1,
-        'reward_points' => 150
-    ));
+    if ( ! empty( $phone ) ) {
+        update_user_meta( $user_id, 'phone_number', $phone );
+    }
 
-    $creds = array('user_login' => $email, 'user_password' => $password, 'remember' => true);
-    wp_signon($creds, false);
+    $creds = array(
+        'user_login'    => $email,
+        'user_password' => $password,
+        'remember'      => true,
+    );
+    $logged_user = wp_signon( $creds, is_ssl() );
 
-    wp_redirect(home_url('/account/'));
+    if ( is_wp_error( $logged_user ) ) {
+        wp_safe_redirect( home_url( '/account/' ) );
+        exit;
+    }
+
+    wp_safe_redirect( $redirect_to );
     exit;
 }
 
-/* ==========================================================================
-   05. PURE-CODE GOOGLE OAUTH 2.0 LOGIN LISTENER
-   ========================================================================== */
-add_action('init', 'bsc_handle_google_oauth_callback');
+add_action( 'init', 'bsc_handle_google_oauth_callback' );
 function bsc_handle_google_oauth_callback() {
-    if (isset($_GET['bsc_auth']) && $_GET['bsc_auth'] === 'google_callback') {
-        $client_id     = get_option('bsc_google_client_id', 'YOUR_GOOGLE_CLIENT_ID');
-        $client_secret = get_option('bsc_google_client_secret', 'YOUR_GOOGLE_CLIENT_SECRET');
-        $redirect_uri  = home_url('/account/?bsc_auth=google_callback');
+    if ( ! isset( $_GET['bsc_auth'] ) || 'google_callback' !== $_GET['bsc_auth'] ) {
+        return;
+    }
 
-        if (isset($_GET['code'])) {
-            $code = sanitize_text_field($_GET['code']);
+    $client_id     = get_option( 'bsc_google_client_id', '' );
+    $client_secret = get_option( 'bsc_google_client_secret', '' );
+    $redirect_uri  = home_url( '/account/?bsc_auth=google_callback' );
 
-            $token_response = wp_remote_post('https://oauth2.googleapis.com/token', array(
-                'body' => array(
-                    'code'          => $code,
-                    'client_id'     => $client_id,
-                    'client_secret' => $client_secret,
-                    'redirect_uri'  => $redirect_uri,
-                    'grant_type'    => 'authorization_code',
-                )
-            ));
-
-            if (!is_wp_error($token_response)) {
-                $token_body = json_decode(wp_remote_retrieve_body($token_response), true);
-                if (isset($token_body['access_token'])) {
-                    $access_token = $token_body['access_token'];
-
-                    $profile_response = wp_remote_get('https://www.googleapis.com/oauth2/v3/userinfo', array(
-                        'headers' => array('Authorization' => 'Bearer ' . $access_token)
-                    ));
-
-                    if (!is_wp_error($profile_response)) {
-                        $profile = json_decode(wp_remote_retrieve_body($profile_response), true);
-                        
-                        if (!empty($profile['email'])) {
-                            $email = sanitize_email($profile['email']);
-                            $name  = sanitize_text_field($profile['name'] ?? 'Google User');
-
-                            global $wpdb;
-                            $table_customers = $wpdb->prefix . 'bsc_customers';
-                            $user = get_user_by('email', $email);
-
-                            if (!$user) {
-                                $username = sanitize_user(current(explode('@', $email)) . '_' . rand(100, 999), true);
-                                $password = wp_generate_password(16, false);
-                                $user_id  = wp_create_user($username, $password, $email);
-
-                                if (!is_wp_error($user_id)) {
-                                    update_user_meta($user_id, 'first_name', $name);
-                                    $user = get_user_by('id', $user_id);
-
-                                    $wpdb->insert($table_customers, array(
-                                        'membership_id' => '#BSC-' . rand(10000, 99999),
-                                        'name'          => $name,
-                                        'email'         => $email,
-                                        'phone'         => '',
-                                        'tier'          => 'VIP CLUB',
-                                        'total_visits'  => 1,
-                                        'reward_points' => 150
-                                    ));
-                                }
-                            }
-
-                            if ($user && !is_wp_error($user)) {
-                                wp_set_current_user($user->ID, $user->user_login);
-                                wp_set_auth_cookie($user->ID, true);
-                                do_action('wp_login', $user->user_login, $user);
-
-                                wp_safe_redirect(home_url('/account/'));
-                                exit;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        wp_safe_redirect(home_url('/login/?login=failed'));
+    $state = sanitize_text_field( wp_unslash( $_GET['state'] ?? '' ) );
+    if ( ! wp_verify_nonce( $state, 'bsc_google_oauth_state' ) ) {
+        wp_safe_redirect( add_query_arg( 'auth_error', 'invalid_state', home_url( '/login/' ) ) );
         exit;
     }
-}
 
-// --- REST API Endpoints ---
-add_action('rest_api_init', 'bsc_register_rest_routes');
-function bsc_register_rest_routes() {
-  register_rest_route('bsc/v1', '/book-ticket', array(
-    'methods'             => 'POST',
-    'callback'            => 'bsc_api_book_ticket',
-    'permission_callback' => '__return_true',
-  ));
-}
-
-function bsc_api_book_ticket($request) {
-  global $wpdb;
-  $table_bookings = $wpdb->prefix . 'bsc_bookings';
-  $table_ledger   = $wpdb->prefix . 'bsc_ledger';
-  $params         = $request->get_json_params();
-
-  $movie_title  = sanitize_text_field($params['movie_title'] ?? 'Feature Presentation');
-  $auditorium   = sanitize_text_field($params['auditorium'] ?? 'Auditorium 1 (23 Seats)');
-  $seats        = sanitize_text_field(implode(', ', (array)($params['seats'] ?? array())));
-  $total_amount = floatval($params['total_amount'] ?? 525.00);
-  $token        = sanitize_text_field($params['token'] ?? ('#BSC-' . rand(1000, 9999) . '-TX'));
-  $method       = sanitize_text_field($params['method'] ?? 'Online Gateway');
-  $booking_date = sanitize_text_field($params['screening_date'] ?? current_time('Y-m-d'));
-  $showtime     = sanitize_text_field($params['screening_time'] ?? '18:00');
-
-  $wpdb->insert($table_bookings, array(
-    'booking_token'  => $token,
-    'movie_title'    => $movie_title,
-    'auditorium'     => $auditorium,
-    'showtime'       => $showtime,
-    'ticket_type'    => 'Standard',
-    'seats'          => $seats,
-    'customer_name'  => sanitize_text_field($params['customer_name'] ?? 'Online Customer'),
-    'customer_phone' => sanitize_text_field($params['customer_phone'] ?? ''),
-    'customer_email' => sanitize_email($params['customer_email'] ?? ''),
-    'total_amount'   => $total_amount,
-    'payment_method' => $method,
-    'payment_status' => 'Confirmed Online',
-    'booking_date'   => $booking_date . ' ' . current_time('H:i:s')
-  ));
-
-  $wpdb->insert($table_ledger, array(
-    'reference_no' => $token,
-    'txn_type'     => 'Income',
-    'particulars'  => 'Ticket Booking: ' . $movie_title . ' (Seats: ' . $seats . ')',
-    'method'       => $method,
-    'amount'       => $total_amount
-  ));
-
-  return rest_ensure_response(array('success' => true, 'token' => $token));
-}
-
-/* ==========================================================================
-   06. CUSTOM LOGIN URL REDIRECTION GATEWAY (FRONTEND ONLY)
-   ========================================================================== */
-add_filter('login_url', 'bsc_redirect_to_custom_login', 10, 3);
-function bsc_redirect_to_custom_login($login_url, $redirect, $force_reauth) {
-    if (is_admin() || strpos($_SERVER['REQUEST_URI'], 'wp-login.php') !== false) {
-        if (empty($redirect) && !isset($_GET['reauth'])) {
-            return $login_url;
-        }
+    if ( empty( $client_id ) || empty( $client_secret ) || ! isset( $_GET['code'] ) ) {
+        wp_safe_redirect( add_query_arg( 'auth_error', 'missing_credentials', home_url( '/login/' ) ) );
+        exit;
     }
 
-    $custom_login = home_url('/login/');
+    $code = sanitize_text_field( wp_unslash( $_GET['code'] ) );
 
-    if (!empty($redirect)) {
-        $custom_login = add_query_arg('redirect_to', urlencode($redirect), $custom_login);
+    $token_response = wp_remote_post( 'https://oauth2.googleapis.com/token', array(
+        'timeout' => 15,
+        'body'    => array(
+            'code'          => $code,
+            'client_id'     => $client_id,
+            'client_secret' => $client_secret,
+            'redirect_uri'  => $redirect_uri,
+            'grant_type'    => 'authorization_code',
+        ),
+    ) );
+
+    if ( is_wp_error( $token_response ) ) {
+        wp_safe_redirect( home_url( '/login/?login=network_error' ) );
+        exit;
+    }
+
+    $token_body = json_decode( wp_remote_retrieve_body( $token_response ), true );
+    if ( empty( $token_body['access_token'] ) ) {
+        wp_safe_redirect( home_url( '/login/?login=token_error' ) );
+        exit;
+    }
+
+    $profile_response = wp_remote_get( 'https://www.googleapis.com/oauth2/v3/userinfo', array(
+        'timeout' => 15,
+        'headers' => array( 'Authorization' => 'Bearer ' . sanitize_text_field( $token_body['access_token'] ) ),
+    ) );
+
+    if ( is_wp_error( $profile_response ) ) {
+        wp_safe_redirect( home_url( '/login/?login=profile_error' ) );
+        exit;
+    }
+
+    $profile = json_decode( wp_remote_retrieve_body( $profile_response ), true );
+    if ( empty( $profile['email'] ) ) {
+        wp_safe_redirect( home_url( '/login/?login=no_email' ) );
+        exit;
+    }
+
+    $email = sanitize_email( $profile['email'] );
+    $name  = sanitize_text_field( $profile['name'] ?? 'Google User' );
+    $user  = get_user_by( 'email', $email );
+
+    if ( ! $user ) {
+        $username = sanitize_user( current( explode( '@', $email ) ) . '_' . wp_rand( 100, 999 ), true );
+        $password = wp_generate_password( 24, true, true );
+        $user_id  = wp_create_user( $username, $password, $email );
+
+        if ( is_wp_error( $user_id ) ) {
+            wp_safe_redirect( home_url( '/login/?login=create_failed' ) );
+            exit;
+        }
+
+        update_user_meta( $user_id, 'first_name', $name );
+        $user = get_user_by( 'id', $user_id );
+    }
+
+    wp_set_current_user( $user->ID, $user->user_login );
+    wp_set_auth_cookie( $user->ID, true );
+    do_action( 'wp_login', $user->user_login, $user );
+
+    wp_safe_redirect( home_url( '/account/' ) );
+    exit;
+}
+
+add_filter( 'login_url', 'bsc_redirect_to_custom_login', 10, 3 );
+function bsc_redirect_to_custom_login( $login_url, $redirect, $force_reauth ) {
+    if ( is_admin() || ( isset( $GLOBALS['pagenow'] ) && 'wp-login.php' === $GLOBALS['pagenow'] ) ) {
+        return $login_url;
+    }
+
+    $custom_login = home_url( '/custom-login/' );
+
+    if ( ! empty( $_SERVER['REQUEST_URI'] ) && false !== strpos( $_SERVER['REQUEST_URI'], 'custom-login' ) ) {
+        return $login_url;
+    }
+
+    if ( ! empty( $redirect ) && false === strpos( $redirect, 'custom-login' ) ) {
+        $custom_login = add_query_arg( 'redirect_to', rawurlencode( $redirect ), $custom_login );
     }
 
     return $custom_login;

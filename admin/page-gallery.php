@@ -155,23 +155,23 @@ function bsc_render_gallery_page() {
       <div>
         <h3 class="cinema-panel-title" style="margin:0; font-size:1.25rem; font-weight:900; display:flex; align-items:center; gap:0.5rem;">
           <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
-          <?php esc_html_e('Multiplex Gallery Showcase Management', 'big-screen-cinemas'); ?>
+          <?php esc_html_e('Multiplex Gallery Showcase Management', 'bsc-cinema-manager'); ?>
         </h3>
         <span style="font-size:0.82rem; color:var(--cinema-text-muted); display:block; margin-top:2px;">
-          <?php esc_html_e('Manage luxury auditoriums, laser screen views, VIP recliner suites, and gourmet food photo cards.', 'big-screen-cinemas'); ?>
+          <?php esc_html_e('Manage luxury auditoriums, laser screen views, VIP recliner suites, and gourmet food photo cards.', 'bsc-cinema-manager'); ?>
         </span>
       </div>
 
       <button type="button" class="button button-primary" id="btn_upload_gallery_img" style="background:#064e3b; border-color:#064e3b; font-weight:800; display:inline-flex; align-items:center; gap:6px; padding:7px 14px;">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-        <?php esc_html_e('Upload / Add Photos', 'big-screen-cinemas'); ?>
+        <?php esc_html_e('Upload / Add Photos', 'bsc-cinema-manager'); ?>
       </button>
     </div>
 
     <?php if (isset($_GET['updated'])): ?>
       <div style="background:#ecfdf5; color:#10b981; border:1px solid #a7f3d0; padding:12px 18px; border-radius:8px; margin-bottom:20px; font-weight:700; display:flex; align-items:center; gap:8px;">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
-        <?php esc_html_e('Gallery changes saved and synced live!', 'big-screen-cinemas'); ?>
+        <?php esc_html_e('Gallery changes saved and synced live!', 'bsc-cinema-manager'); ?>
       </div>
     <?php endif; ?>
 
@@ -192,19 +192,19 @@ function bsc_render_gallery_page() {
                 <div class="bsc-gallery-field">
                   <label>
                     <svg viewBox="0 0 24 24"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
-                    <?php esc_html_e('Category', 'big-screen-cinemas'); ?>
+                    <?php esc_html_e('Category', 'bsc-cinema-manager'); ?>
                   </label>
                   <select name="gallery_categories[]">
-                    <option value="screens" <?php selected($img['category'] ?? '', 'screens'); ?>><?php esc_html_e('Auditoriums & Screens', 'big-screen-cinemas'); ?></option>
-                    <option value="lounges" <?php selected($img['category'] ?? '', 'lounges'); ?>><?php esc_html_e('VIP Recliners & Lounges', 'big-screen-cinemas'); ?></option>
-                    <option value="dining" <?php selected($img['category'] ?? '', 'dining'); ?>><?php esc_html_e('Gourmet Concessions', 'big-screen-cinemas'); ?></option>
+                    <option value="screens" <?php selected($img['category'] ?? '', 'screens'); ?>><?php esc_html_e('Auditoriums & Screens', 'bsc-cinema-manager'); ?></option>
+                    <option value="lounges" <?php selected($img['category'] ?? '', 'lounges'); ?>><?php esc_html_e('VIP Recliners & Lounges', 'bsc-cinema-manager'); ?></option>
+                    <option value="dining" <?php selected($img['category'] ?? '', 'dining'); ?>><?php esc_html_e('Gourmet Concessions', 'bsc-cinema-manager'); ?></option>
                   </select>
                 </div>
 
                 <div class="bsc-gallery-field">
                   <label>
                     <svg viewBox="0 0 24 24"><path d="M5 4v3h5.5v12h3V7H19V4z"/></svg>
-                    <?php esc_html_e('Title / Heading', 'big-screen-cinemas'); ?>
+                    <?php esc_html_e('Title / Heading', 'bsc-cinema-manager'); ?>
                   </label>
                   <input type="text" name="gallery_titles[]" value="<?php echo esc_attr($img['title'] ?? ''); ?>" placeholder="e.g. 70ft Curved Silver Screen" required>
                 </div>
@@ -212,9 +212,9 @@ function bsc_render_gallery_page() {
                 <div class="bsc-gallery-field">
                   <label>
                     <svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
-                    <?php esc_html_e('Lightbox Description', 'big-screen-cinemas'); ?>
+                    <?php esc_html_e('Lightbox Description', 'bsc-cinema-manager'); ?>
                   </label>
-                  <textarea name="gallery_descriptions[]" rows="2" placeholder="<?php esc_attr_e('Brief description displayed on full view...', 'big-screen-cinemas'); ?>"><?php echo esc_textarea($img['description'] ?? ''); ?></textarea>
+                  <textarea name="gallery_descriptions[]" rows="2" placeholder="<?php esc_attr_e('Brief description displayed on full view...', 'bsc-cinema-manager'); ?>"><?php echo esc_textarea($img['description'] ?? ''); ?></textarea>
                 </div>
               </div>
             </div>
@@ -222,13 +222,13 @@ function bsc_render_gallery_page() {
             <div class="bsc-gallery-card-footer">
               <button type="button" class="bsc-btn-remove-photo" onclick="this.closest('.bsc-gallery-card-item').remove()">
                 <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-                <span><?php esc_html_e('Delete Photo', 'big-screen-cinemas'); ?></span>
+                <span><?php esc_html_e('Delete Photo', 'bsc-cinema-manager'); ?></span>
               </button>
             </div>
           </div>
         <?php endforeach; else: ?>
           <p id="empty_gallery_text" style="color:var(--cinema-text-muted); grid-column:1/-1; text-align:center; padding:3.5rem; background:#f8fafc; border:1px dashed var(--cinema-border); border-radius:12px;">
-            <?php esc_html_e('No gallery photos found. Click "+ Upload / Add Photos" to add images.', 'big-screen-cinemas'); ?>
+            <?php esc_html_e('No gallery photos found. Click "+ Upload / Add Photos" to add images.', 'bsc-cinema-manager'); ?>
           </p>
         <?php endif; ?>
       </div>
@@ -236,7 +236,7 @@ function bsc_render_gallery_page() {
       <div style="margin-top:2rem; background:#f8fafc; border-top:1px solid var(--cinema-border); padding:1.25rem; border-radius:12px; display:flex; justify-content:flex-end;">
         <button type="submit" class="button button-primary" style="background:#064e3b; border-color:#064e3b; padding:9px 24px; font-weight:800; font-size:0.95rem; border-radius:6px; display:inline-flex; align-items:center; gap:6px;">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/></svg>
-          <?php esc_html_e('Save Gallery Changes', 'big-screen-cinemas'); ?>
+          <?php esc_html_e('Save Gallery Changes', 'bsc-cinema-manager'); ?>
         </button>
       </div>
     </form>

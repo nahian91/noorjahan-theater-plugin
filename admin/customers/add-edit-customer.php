@@ -1,73 +1,141 @@
 <?php
-if (!defined('ABSPATH')) exit;
+/**
+ * Customer Module - Add & Edit Customer Views & Submission Handlers
+ *
+ * Path: admin/customers/add-edit-customer.php
+ */
+
+if ( ! defined( 'ABSPATH' ) ) {
+    exit;
+}
+
+// -------------------------------------------------------------
+// 1. PROCESS FORM SUBMISSIONS ON admin_init (PREVENTS HEADER CONFLICTS)
+// -------------------------------------------------------------
+function bsc_handle_customer_form_submissions() {
+    if ( 'POST' !== $_SERVER['REQUEST_METHOD'] || ! isset( $_POST['bsc_action'] ) ) {
+        return;
+    }
+
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_die( esc_html__( 'Unauthorized access.', 'bsc-cinema-manager' ) );
+    }
+
+    global $wpdb;
+    $table_customers = $wpdb->prefix . 'bsc_customers';
+
+    $action = sanitize_text_field( wp_unslash( $_POST['bsc_action'] ?? '' ) );
+    $name   = sanitize_text_field( wp_unslash( $_POST['customer_name'] ?? '' ) );
+    $phone  = sanitize_text_field( wp_unslash( $_POST['customer_phone'] ?? '' ) );
+    $email  = sanitize_email( wp_unslash( $_POST['customer_email'] ?? '' ) );
+
+    // 1. Add Customer
+    if ( 'add_customer' === $action ) {
+        check_admin_referer( 'bsc_add_customer_verify' );
+
+        $inserted = $wpdb->insert(
+            $table_customers,
+            array(
+                'name'       => $name,
+                'phone'      => $phone,
+                'email'      => $email,
+                'created_at' => current_time( 'mysql' ),
+            ),
+            array( '%s', '%s', '%s', '%s' )
+        );
+
+        if ( false !== $inserted ) {
+            wp_safe_redirect( admin_url( 'admin.php?page=bsc-customers&subtab=all&customer_added=true' ) );
+            exit;
+        } else {
+            wp_safe_redirect( admin_url( 'admin.php?page=bsc-customers&subtab=add&customer_error=db_failed' ) );
+            exit;
+        }
+    }
+
+    // 2. Edit Customer
+    if ( 'edit_customer' === $action ) {
+        check_admin_referer( 'bsc_edit_customer_verify' );
+        $customer_id = absint( $_POST['customer_id'] ?? 0 );
+
+        if ( $customer_id > 0 ) {
+            $updated = $wpdb->update(
+                $table_customers,
+                array(
+                    'name'  => $name,
+                    'phone' => $phone,
+                    'email' => $email,
+                ),
+                array( 'id' => $customer_id ),
+                array( '%s', '%s', '%s' ),
+                array( '%d' )
+            );
+
+            if ( false !== $updated ) {
+                wp_safe_redirect( admin_url( 'admin.php?page=bsc-customers&subtab=all&customer_updated=true' ) );
+                exit;
+            } else {
+                wp_safe_redirect( admin_url( 'admin.php?page=bsc-customers&subtab=edit&id=' . $customer_id . '&customer_error=db_failed' ) );
+                exit;
+            }
+        }
+    }
+}
+add_action( 'admin_init', 'bsc_handle_customer_form_submissions' );
+
+// -------------------------------------------------------------
+// 2. UI VIEW RENDERING
+// -------------------------------------------------------------
+global $wpdb;
+$table_customers = $wpdb->prefix . 'bsc_customers';
+
+$subtab      = isset( $_GET['subtab'] ) ? sanitize_key( $_GET['subtab'] ) : 'add';
+$customer_id = isset( $_GET['id'] ) ? absint( $_GET['id'] ) : 0;
 
 $customer = null;
-$is_edit  = ($subtab === 'edit' && $customer_id > 0);
+$is_edit  = ( 'edit' === $subtab && $customer_id > 0 );
 
-if ($is_edit) {
-  $customer = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_customers WHERE id = %d", $customer_id));
+if ( $is_edit ) {
+    $customer = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_customers} WHERE id = %d", $customer_id ) );
 }
 ?>
-<div class="cinema-panel" style="max-width: 680px; margin: 0 auto; box-shadow:0 4px 16px rgba(15,23,42,0.03);">
-  <h3 class="cinema-panel-title" style="margin-bottom: 1.5rem;">
+<div class="cinema-panel" style="max-width: 680px; margin: 10px auto; box-shadow:0 4px 16px rgba(15,23,42,0.03);">
+  <h3 class="cinema-panel-title" style="margin-bottom: 1.5rem; display:flex; align-items:center; gap:8px;">
     <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
-    <?php echo $is_edit ? esc_html__('Edit Customer Profile', 'big-screen-cinemas') : esc_html__('Register New VIP Club Member', 'big-screen-cinemas'); ?>
+    <?php echo $is_edit ? esc_html__( 'Edit Customer Profile', 'bsc-cinema-manager' ) : esc_html__( 'Register New Club Member', 'bsc-cinema-manager' ); ?>
   </h3>
 
-  <form method="POST" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+  <form method="POST" action="<?php echo esc_url( admin_url( 'admin.php?page=bsc-customers' . ( $is_edit ? '&subtab=edit&id=' . $customer->id : '' ) ) ); ?>">
     <?php
-    if ($is_edit) {
-      wp_nonce_field('bsc_edit_customer_verify');
-      echo '<input type="hidden" name="action" value="bsc_edit_customer">';
-      echo '<input type="hidden" name="customer_id" value="' . esc_attr($customer->id) . '">';
+    if ( $is_edit ) {
+        wp_nonce_field( 'bsc_edit_customer_verify' );
+        echo '<input type="hidden" name="bsc_action" value="edit_customer">';
+        echo '<input type="hidden" name="customer_id" value="' . esc_attr( $customer->id ) . '">';
     } else {
-      wp_nonce_field('bsc_add_customer_verify');
-      echo '<input type="hidden" name="action" value="bsc_add_customer">';
+        wp_nonce_field( 'bsc_add_customer_verify' );
+        echo '<input type="hidden" name="bsc_action" value="add_customer">';
     }
     ?>
 
-    <div class="bsc-form-group">
-      <label><?php esc_html_e('Customer Full Name', 'big-screen-cinemas'); ?> *</label>
-      <input type="text" name="customer_name" required value="<?php echo esc_attr($customer->name ?? ''); ?>" placeholder="e.g. Mahfuzur Rahman">
+    <div class="bsc-form-group" style="margin-bottom:1.25rem;">
+      <label style="display:block; font-size:0.8rem; font-weight:700; color:#334155; margin-bottom:5px;"><?php esc_html_e( 'Customer Full Name', 'bsc-cinema-manager' ); ?> *</label>
+      <input type="text" name="customer_name" required value="<?php echo esc_attr( $customer->name ?? '' ); ?>" placeholder="e.g. Mahfuzur Rahman" style="width:100%; padding:8px 12px; border:1px solid #cbd5e1; border-radius:6px;">
     </div>
 
-    <div class="bsc-form-grid-2">
-      <div class="bsc-form-group">
-        <label><?php esc_html_e('Phone Number', 'big-screen-cinemas'); ?> *</label>
-        <input type="text" name="customer_phone" required value="<?php echo esc_attr($customer->phone ?? '+880 '); ?>" placeholder="+880 1700-000000">
+    <div class="bsc-form-grid-2" style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:1.5rem;">
+      <div class="bsc-form-group" style="margin-bottom:0;">
+        <label style="display:block; font-size:0.8rem; font-weight:700; color:#334155; margin-bottom:5px;"><?php esc_html_e( 'Phone Number', 'bsc-cinema-manager' ); ?> *</label>
+        <input type="text" name="customer_phone" required value="<?php echo esc_attr( $customer->phone ?? '+880 ' ); ?>" placeholder="+880 1700-000000" style="width:100%; padding:8px 12px; border:1px solid #cbd5e1; border-radius:6px;">
       </div>
-      <div class="bsc-form-group">
-        <label><?php esc_html_e('Email Address', 'big-screen-cinemas'); ?></label>
-        <input type="email" name="customer_email" value="<?php echo esc_attr($customer->email ?? ''); ?>" placeholder="customer@example.com">
-      </div>
-    </div>
-
-    <div class="bsc-form-grid-3">
-      <div class="bsc-form-group">
-        <label><?php esc_html_e('Membership Tier', 'big-screen-cinemas'); ?> *</label>
-        <select name="customer_tier">
-          <?php
-            $tiers = array('VIP CLUB', 'STANDARD CLUB', 'PREMIER ELITE');
-            $selected_tier = $customer->tier ?? 'VIP CLUB';
-            foreach ($tiers as $t) {
-              echo '<option value="' . esc_attr($t) . '" ' . selected($selected_tier, $t, false) . '>' . esc_html($t) . '</option>';
-            }
-          ?>
-        </select>
-      </div>
-      <div class="bsc-form-group">
-        <label><?php esc_html_e('Total Visits', 'big-screen-cinemas'); ?></label>
-        <input type="number" name="total_visits" min="0" value="<?php echo esc_attr($customer->total_visits ?? 1); ?>">
-      </div>
-      <div class="bsc-form-group">
-        <label><?php esc_html_e('Reward Points', 'big-screen-cinemas'); ?></label>
-        <input type="number" name="reward_points" min="0" value="<?php echo esc_attr($customer->reward_points ?? 100); ?>">
+      <div class="bsc-form-group" style="margin-bottom:0;">
+        <label style="display:block; font-size:0.8rem; font-weight:700; color:#334155; margin-bottom:5px;"><?php esc_html_e( 'Email Address', 'bsc-cinema-manager' ); ?></label>
+        <input type="email" name="customer_email" value="<?php echo esc_attr( $customer->email ?? '' ); ?>" placeholder="customer@example.com" style="width:100%; padding:8px 12px; border:1px solid #cbd5e1; border-radius:6px;">
       </div>
     </div>
 
-    <button type="submit" class="button button-primary" style="background:#064e3b; border-color:#064e3b; width:100%; padding:12px; font-weight:800; font-size: 0.95rem; border-radius:8px; margin-top:0.75rem; display:flex; align-items:center; justify-content:center; gap:8px;">
+    <button type="submit" class="button button-primary" style="background:#064e3b; border-color:#064e3b; width:100%; padding:11px; font-weight:800; font-size: 0.95rem; border-radius:8px; display:flex; align-items:center; justify-content:center; gap:8px; box-shadow:0 2px 6px rgba(6,78,59,0.2);">
       <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/></svg>
-      <?php echo $is_edit ? esc_html__('Update Customer Profile', 'big-screen-cinemas') : esc_html__('Save VIP Member', 'big-screen-cinemas'); ?>
+      <span><?php echo $is_edit ? esc_html__( 'Update Customer Profile', 'bsc-cinema-manager' ) : esc_html__( 'Save Member', 'bsc-cinema-manager' ); ?></span>
     </button>
   </form>
 </div>

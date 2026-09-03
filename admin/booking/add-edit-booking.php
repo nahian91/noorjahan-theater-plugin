@@ -1,435 +1,782 @@
 <?php
-if (!defined('ABSPATH')) exit;
+/**
+ * Booking Module - Unified Add & Edit Interactive Workspace
+ *
+ * Path: admin/booking/add-edit-booking.php
+ */
 
-if ($subtab === 'edit' && $booking_id > 0):
-  $edit_booking = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_bookings WHERE id = %d", $booking_id));
-  if (!$edit_booking) { echo '<div class="error"><p>Booking not found.</p></div>'; return; }
+if ( ! defined( 'ABSPATH' ) ) {
+    exit;
+}
+
+if ( ! current_user_can( 'manage_options' ) ) {
+    wp_die( esc_html__( 'Unauthorized access.', 'bsc-cinema-manager' ) );
+}
+
+global $wpdb;
+$table_bookings = $wpdb->prefix . 'bsc_bookings';
+$table_movies   = $wpdb->prefix . 'bsc_control_movies';
+
+$subtab     = isset( $_GET['subtab'] ) ? sanitize_key( $_GET['subtab'] ) : 'add';
+$booking_id = isset( $_GET['id'] ) ? absint( $_GET['id'] ) : 0;
+$is_edit    = ( 'edit' === $subtab && $booking_id > 0 );
+
+$currency_symbol = sanitize_text_field( get_option( 'bsc_currency_symbol', '৳' ) );
+$std_base_price  = floatval( get_option( 'bsc_standard_price', 400.00 ) );
+$vip_base_price  = floatval( get_option( 'bsc_vip_price', 500.00 ) );
+
+if ( $std_base_price <= 0 ) {
+    $std_base_price = 400.00;
+}
+if ( $vip_base_price <= 0 ) {
+    $vip_base_price = 500.00;
+}
+
+$service_charge_pct = max( 0, floatval( get_option( 'bsc_service_charge_pct', 5.00 ) ) );
+$enable_tax         = ( 'yes' === get_option( 'bsc_enable_tax', 'yes' ) );
+
+// Fetch Edit Target Data
+$edit_booking = null;
+$preselected_seats = array();
+if ( $is_edit ) {
+    $edit_booking = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table_bookings} WHERE id = %d", $booking_id ) );
+    if ( ! $edit_booking ) {
+        echo '<div class="notice notice-error" style="padding:15px;"><p>' . esc_html__( 'Booking record not found.', 'bsc-cinema-manager' ) . '</p></div>';
+        return;
+    }
+    $preselected_seats = array_filter( array_map( 'trim', explode( ',', $edit_booking->seats ) ) );
+}
+
+// Fetch all movies
+$movies = $wpdb->get_results( "SELECT id, title, showtimes FROM {$table_movies} ORDER BY id DESC" );
+
+// Map existing occupied seats across other bookings (excluding current booking when in edit mode)
+$query_occupied = "SELECT id, movie_title, showtime, seats, booking_date FROM {$table_bookings}";
+if ( $is_edit ) {
+    $query_occupied .= $wpdb->prepare( " WHERE id != %d", $booking_id );
+}
+$all_bookings_raw = $wpdb->get_results( $query_occupied );
+$slot_booked_seats_map = array();
+
+if ( ! empty( $all_bookings_raw ) ) {
+    foreach ( $all_bookings_raw as $b_row ) {
+        $b_movie  = trim( strtolower( $b_row->movie_title ) );
+        $b_date   = date( 'Y-m-d', strtotime( $b_row->booking_date ) );
+        $b_time   = trim( $b_row->showtime );
+        $slot_key = $b_movie . '_' . $b_date . '_' . $b_time;
+
+        if ( ! isset( $slot_booked_seats_map[ $slot_key ] ) ) {
+            $slot_booked_seats_map[ $slot_key ] = array();
+        }
+
+        $seats = explode( ',', $b_row->seats );
+        foreach ( $seats as $st ) {
+            $clean = trim( strtoupper( $st ) );
+            if ( ! empty( $clean ) && ! in_array( $clean, $slot_booked_seats_map[ $slot_key ], true ) ) {
+                $slot_booked_seats_map[ $slot_key ][] = $clean;
+            }
+        }
+    }
+}
+
+// Prepare baseline values
+$current_movie     = $is_edit ? $edit_booking->movie_title : ( ! empty( $movies ) ? $movies[0]->title : 'Feature Presentation' );
+$current_date      = $is_edit && ! empty( $edit_booking->booking_date ) ? date( 'Y-m-d', strtotime( $edit_booking->booking_date ) ) : current_time( 'Y-m-d' );
+$current_time      = $is_edit ? trim( $edit_booking->showtime ) : '11:00 AM';
+$current_cust_name = $is_edit ? $edit_booking->customer_name : 'Walk-In Guest';
+$current_cust_ph   = $is_edit ? $edit_booking->customer_phone : '+880 ';
+$current_cust_em   = $is_edit ? $edit_booking->customer_email : '';
+$current_method    = $is_edit ? $edit_booking->payment_method : 'Cash';
+$current_status    = $is_edit ? $edit_booking->payment_status : 'Confirmed';
 ?>
-  <!-- Edit Booking Form View -->
-  <div class="cinema-panel" style="max-width: 680px; margin: 0 auto; box-shadow: 0 4px 16px rgba(15, 23, 42, 0.04);">
-    <div class="cinema-panel-header">
-      <h3 class="cinema-panel-title">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
-        <?php esc_html_e('Edit Booking Record:', 'big-screen-cinemas'); ?> <code><?php echo esc_html($edit_booking->booking_token); ?></code>
-      </h3>
-      <a href="<?php echo esc_url(admin_url('admin.php?page=bsc-booking&subtab=all')); ?>" class="button button-secondary">← Back to All</a>
-    </div>
 
-    <form method="POST" action="">
-      <?php wp_nonce_field('bsc_edit_booking_verify'); ?>
-      <input type="hidden" name="bsc_action" value="edit_booking">
-      <input type="hidden" name="booking_id" value="<?php echo intval($edit_booking->id); ?>">
+<style>
+    .bsc-booking-builder-grid {
+        display: grid;
+        grid-template-columns: 1fr 360px;
+        gap: 1.5rem;
+        align-items: start;
+        max-width: 1180px;
+        margin: 10px auto 60px auto;
+    }
+    .bsc-seat-matrix-card {
+        background: #060e12;
+        border-radius: var(--cinema-radius-md, 8px);
+        padding: 1.75rem 2rem;
+        color: #fff;
+        border: 1px solid #172a33;
+        box-shadow: 0 16px 36px rgba(0, 0, 0, 0.15);
+    }
+    .bsc-seat-matrix-wrapper {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 1.5rem;
+        padding: 1.5rem 0;
+        overflow-x: auto;
+    }
+    .bsc-seat-column {
+        display: flex;
+        flex-direction: column;
+        gap: 0.65rem;
+        align-items: center;
+    }
+    .bsc-col-header {
+        font-size: 0.72rem;
+        font-weight: 800;
+        color: #64748b;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 0.35rem;
+    }
+    .bsc-seat-box {
+        width: 44px;
+        height: 44px;
+        border-radius: 8px;
+        border: 2px solid transparent;
+        font-weight: 800;
+        font-size: 0.8rem;
+        font-family: var(--cinema-font-mono, monospace);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        user-select: none;
+        outline: none;
+    }
+    .bsc-seat-box.vip {
+        background: #3b1704;
+        border-color: #b45309;
+        color: #fde68a;
+    }
+    .bsc-seat-box.standard {
+        background: #09231f;
+        border-color: #0d9488;
+        color: #99f6e4;
+    }
+    .bsc-seat-box:hover:not(:disabled) {
+        transform: translateY(-2px) scale(1.05);
+        box-shadow: 0 6px 14px rgba(0,0,0,0.4);
+    }
+    .bsc-seat-box.selected {
+        background: #f59e0b !important;
+        border-color: #fde68a !important;
+        color: #000000 !important;
+        box-shadow: 0 0 16px rgba(245, 158, 11, 0.7);
+        transform: scale(1.08);
+    }
+    .bsc-seat-box:disabled, .bsc-seat-box.occupied {
+        background: #1e1215 !important;
+        border-color: #ef4444 !important;
+        color: #fca5a5 !important;
+        cursor: not-allowed;
+        opacity: 0.45;
+        transform: none !important;
+        box-shadow: none !important;
+    }
+    .bsc-screen-indicator {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding-left: 1.25rem;
+        border-left: 2px dashed rgba(255, 255, 255, 0.12);
+        color: #0d9488;
+        font-weight: 900;
+        font-size: 0.75rem;
+        letter-spacing: 3px;
+    }
+    .bsc-screen-indicator svg {
+        width: 22px;
+        height: 22px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 2;
+        margin-top: 8px;
+    }
+    .bsc-seat-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1.5rem;
+        justify-content: center;
+        padding-top: 1.25rem;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        font-size: 0.8rem;
+    }
+    .bsc-summary-sidebar {
+        background: #ffffff;
+        border: 1px solid var(--cinema-border, #e2e8f0);
+        border-radius: var(--cinema-radius-md, 8px);
+        padding: 1.6rem;
+        box-shadow: 0 4px 16px rgba(15, 23, 42, 0.03);
+    }
+    .bsc-selected-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+        min-height: 44px;
+        padding: 0.65rem;
+        background: #f8fafc;
+        border: 1px solid var(--cinema-border, #e2e8f0);
+        border-radius: 8px;
+        margin-bottom: 1.25rem;
+        align-items: center;
+    }
+    .bsc-seat-chip {
+        background: #0d9488;
+        color: #fff;
+        font-size: 0.75rem;
+        font-weight: 800;
+        padding: 0.2rem 0.55rem;
+        border-radius: 4px;
+        font-family: var(--cinema-font-mono, monospace);
+    }
+    .bsc-bill-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.88rem;
+        margin-bottom: 1.5rem;
+    }
+    .bsc-bill-table td {
+        padding: 0.55rem 0;
+        border-bottom: 1px dashed var(--cinema-border-light, #f1f5f9);
+    }
+    .bsc-bill-table tr.grand-row td {
+        border-bottom: none;
+        padding-top: 0.85rem;
+        font-size: 1.05rem;
+        font-weight: 900;
+    }
+    @media (max-width: 1024px) {
+        .bsc-booking-builder-grid { grid-template-columns: 1fr; }
+    }
+</style>
 
-      <div class="bsc-form-group">
-        <label>Feature Movie Presentation</label>
-        <input type="text" class="regular-text" value="<?php echo esc_attr($edit_booking->movie_title); ?>" readonly style="background:#f1f5f9; font-weight:700;">
-      </div>
+<form method="POST" action="<?php echo esc_url( admin_url( 'admin.php?page=bsc-booking' ) ); ?>" id="bscBookingForm">
+    <?php if ( $is_edit ) : ?>
+        <?php wp_nonce_field( 'bsc_edit_booking_verify' ); ?>
+        <input type="hidden" name="bsc_action" value="edit_booking">
+        <input type="hidden" name="booking_id" value="<?php echo esc_attr( $edit_booking->id ); ?>">
+    <?php else : ?>
+        <?php wp_nonce_field( 'bsc_manual_booking_verify' ); ?>
+        <input type="hidden" name="bsc_action" value="add_booking">
+    <?php endif; ?>
 
-      <div class="bsc-form-grid-2">
-        <div class="bsc-form-group">
-          <label>Customer Name *</label>
-          <input type="text" name="customer_name" class="regular-text" value="<?php echo esc_attr($edit_booking->customer_name); ?>" required>
-        </div>
-        <div class="bsc-form-group">
-          <label>Customer Phone *</label>
-          <input type="text" name="customer_phone" class="regular-text" value="<?php echo esc_attr($edit_booking->customer_phone); ?>" required>
-        </div>
-      </div>
-
-      <div class="bsc-form-grid-2">
-        <div class="bsc-form-group">
-          <label>Customer Email</label>
-          <input type="email" name="customer_email" class="regular-text" value="<?php echo esc_attr($edit_booking->customer_email); ?>">
-        </div>
-        <div class="bsc-form-group">
-          <label>Reserved Seats *</label>
-          <input type="text" name="seats" class="regular-text" value="<?php echo esc_attr($edit_booking->seats); ?>" required>
-        </div>
-      </div>
-
-      <div class="bsc-form-grid-3">
-        <div class="bsc-form-group">
-          <label>Total Amount (<?php echo esc_html($currency_symbol); ?>) *</label>
-          <input type="number" step="0.01" name="total_amount" class="regular-text" value="<?php echo esc_attr($edit_booking->total_amount); ?>" required>
-        </div>
-        <div class="bsc-form-group">
-          <label>Payment Method</label>
-          <select name="payment_method">
-            <option value="Cash" <?php selected($edit_booking->payment_method, 'Cash'); ?>>Cash</option>
-            <option value="bKash" <?php selected($edit_booking->payment_method, 'bKash'); ?>>bKash</option>
-          </select>
-        </div>
-        <div class="bsc-form-group">
-          <label>Payment Status</label>
-          <select name="payment_status">
-            <option value="Confirmed" <?php selected($edit_booking->payment_status, 'Confirmed'); ?>>Confirmed</option>
-            <option value="Confirmed Online" <?php selected($edit_booking->payment_status, 'Confirmed Online'); ?>>Confirmed Online</option>
-            <option value="bKash Paid" <?php selected($edit_booking->payment_status, 'bKash Paid'); ?>>bKash Paid</option>
-          </select>
-        </div>
-      </div>
-
-      <div style="margin-top: 1.5rem; text-align:right;">
-        <button type="submit" class="button button-primary" style="background:#064e3b; border-color:#064e3b; padding:8px 20px; font-weight:800; border-radius:6px; display:inline-flex; align-items:center; gap:6px;">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/></svg>
-          <?php esc_html_e('Save Booking Changes', 'big-screen-cinemas'); ?>
-        </button>
-      </div>
-    </form>
-  </div>
-
-<?php else: ?>
-  <!-- Add New Walk-in Reservation Form -->
-  <form method="POST" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" id="bscBookingForm">
-    <?php wp_nonce_field('bsc_manual_booking_verify'); ?>
-    <input type="hidden" name="action" value="bsc_manual_booking">
-    <input type="hidden" name="manual_seats" id="input_manual_seats" required value="">
-    <input type="hidden" name="manual_amount" id="input_manual_amount" required value="0">
-    <input type="hidden" name="manual_audit" id="input_manual_audit" value="Auditorium 1 (23 Seats)">
+    <input type="hidden" name="manual_seats" id="input_manual_seats" required value="<?php echo esc_attr( implode( ', ', $preselected_seats ) ); ?>">
+    <input type="hidden" name="seats" id="input_seats_sync" value="<?php echo esc_attr( implode( ', ', $preselected_seats ) ); ?>">
+    <input type="hidden" name="manual_amount" id="input_manual_amount" required value="<?php echo esc_attr( $is_edit ? $edit_booking->total_amount : '0.00' ); ?>">
+    <input type="hidden" name="total_amount" id="input_total_amount_sync" value="<?php echo esc_attr( $is_edit ? $edit_booking->total_amount : '0.00' ); ?>">
+    <input type="hidden" name="manual_ticket_type" id="input_manual_ticket_type" value="<?php echo esc_attr( $is_edit ? $edit_booking->ticket_type : 'Standard' ); ?>">
 
     <div class="bsc-booking-builder-grid">
-      
-      <div>
-        <!-- Step 1: Presentation & Showtime Config -->
-        <div class="cinema-panel" style="margin-bottom: 1.5rem;">
-          <h3 class="cinema-panel-title" style="margin-bottom: 1.25rem;">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4h-4z"/></svg>
-            <?php esc_html_e('1. Select Feature Presentation & Showtime', 'big-screen-cinemas'); ?>
-          </h3>
-          
-          <div class="bsc-form-grid-3">
-            <div class="bsc-form-group" style="margin-bottom:0;">
-              <label><?php esc_html_e('Feature Movie', 'big-screen-cinemas'); ?> *</label>
-              <select name="manual_movie" id="select_movie" required onchange="onMovieChange(this)">
-                <?php if (!empty($movies)): foreach ($movies as $m): ?>
-                  <option value="<?php echo esc_attr($m->title); ?>" data-showtimes="<?php echo esc_attr($m->showtimes); ?>" data-audit="<?php echo esc_attr($m->auditorium); ?>" data-price="<?php echo esc_attr($m->ticket_price); ?>">
-                    <?php echo esc_html($m->title); ?>
-                  </option>
-                <?php endforeach; else: ?>
-                  <option value="Borbaad" data-showtimes='["14:30", "18:00", "21:30"]' data-audit="Auditorium 1 (23 Seats)" data-price="400">Borbaad</option>
+        <!-- LEFT COLUMN: Movie / Date / Showtime & Visual Matrix -->
+        <div>
+            <!-- Step 1: Movie & Showtimes Selection -->
+            <div class="cinema-panel" style="background:#ffffff; border:1px solid #e2e8f0; border-radius:12px; padding:20px; margin-bottom:1.5rem; box-shadow:0 1px 3px rgba(0,0,0,0.03);">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
+                    <h3 style="margin:0; font-size:1.05rem; font-weight:800; color:#0f172a; display:flex; align-items:center; gap:8px;">
+                        <svg viewBox="0 0 24 24" width="20" height="20" fill="#0d9488"><path d="M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4h-4z"/></svg>
+                        <span><?php echo $is_edit ? esc_html__( '1. Modify Feature Movie & Screening Schedule', 'bsc-cinema-manager' ) : esc_html__( '1. Select Movie & Screening Schedule', 'bsc-cinema-manager' ); ?></span>
+                    </h3>
+                    <?php if ( $is_edit ) : ?>
+                        <code style="background:#f1f5f9; padding:2px 8px; border-radius:4px; font-size:0.85rem; font-weight:800; color:#0f172a;"><?php echo esc_html( $edit_booking->booking_token ); ?></code>
+                    <?php endif; ?>
+                </div>
+
+                <div class="bsc-form-grid-3" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:14px;">
+                    <div class="bsc-form-group" style="margin-bottom:0;">
+                        <label style="display:block; font-size:0.8rem; font-weight:700; color:#334155; margin-bottom:5px;"><?php esc_html_e( 'Feature Movie', 'bsc-cinema-manager' ); ?> *</label>
+                        <select name="manual_movie" id="select_movie" required onchange="onMovieChange(this)" style="width:100%; padding:8px 12px; border:1px solid #cbd5e1; border-radius:6px;">
+                            <?php if ( ! empty( $movies ) ) : foreach ( $movies as $m ) : ?>
+                                <option value="<?php echo esc_attr( $m->title ); ?>" data-showtimes="<?php echo esc_attr( $m->showtimes ); ?>" <?php selected( $current_movie, $m->title ); ?>>
+                                    <?php echo esc_html( $m->title ); ?>
+                                </option>
+                            <?php endforeach; else : ?>
+                                <option value="<?php echo esc_attr( $current_movie ); ?>" data-showtimes='[{"date":"<?php echo esc_attr( $current_date ); ?>","times":["11:00 AM","02:00 PM","05:00 PM"]}]'><?php echo esc_html( $current_movie ); ?></option>
+                            <?php endif; ?>
+                        </select>
+                    </div>
+
+                    <div class="bsc-form-group" style="margin-bottom:0;">
+                        <label style="display:block; font-size:0.8rem; font-weight:700; color:#334155; margin-bottom:5px;"><?php esc_html_e( 'Screening Date', 'bsc-cinema-manager' ); ?> *</label>
+                        <select name="manual_booking_date" id="select_schedule_date" required onchange="onScheduleDateChange(this)" style="width:100%; padding:8px 12px; border:1px solid #cbd5e1; border-radius:6px;">
+                            <option value="<?php echo esc_attr( $current_date ); ?>"><?php echo esc_html( date_i18n( 'd M Y', strtotime( $current_date ) ) ); ?></option>
+                        </select>
+                    </div>
+
+                    <div class="bsc-form-group" style="margin-bottom:0;">
+                        <label style="display:block; font-size:0.8rem; font-weight:700; color:#334155; margin-bottom:5px;"><?php esc_html_e( 'Showtime Slot', 'bsc-cinema-manager' ); ?> *</label>
+                        <select name="manual_showtime" id="select_showtime" required onchange="onShowtimeChange(this)" style="width:100%; padding:8px 12px; border:1px solid #cbd5e1; border-radius:6px;">
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 2: Interactive Seating Matrix -->
+            <div class="bsc-seat-matrix-card">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 1.25rem;">
+                    <h4 style="font-size:1.1rem; font-weight:800; margin:0; color:#fff;">
+                        <?php echo $is_edit ? esc_html__( 'Seat Reservation Adjustments (Click to Change)', 'bsc-cinema-manager' ) : esc_html__( 'Interactive Seat Reservation Chart', 'bsc-cinema-manager' ); ?>
+                    </h4>
+                    <span id="selectedSeatsCounter" style="font-family:monospace; font-size:0.85rem; color:#38bdf8; font-weight:800; background:rgba(56,189,248,0.1); padding:4px 10px; border-radius:6px; border:1px solid rgba(56,189,248,0.25);">
+                        0 Seats Picked
+                    </span>
+                </div>
+
+                <div class="bsc-seat-matrix-wrapper">
+                    <!-- Row A (VIP - 5 Seats) -->
+                    <div class="bsc-seat-column">
+                        <div class="bsc-col-header" style="color:#fbbf24;">Row A (VIP)</div>
+                        <?php foreach ( array( 'A1', 'A2', 'A3', 'A4', 'A5' ) as $s_id ) : ?>
+                            <button type="button" class="bsc-seat-box vip" data-seat="<?php echo esc_attr( $s_id ); ?>" data-type="vip" onclick="toggleAdminSeat('<?php echo esc_attr( $s_id ); ?>', this, 'vip')">
+                                <?php echo esc_html( $s_id ); ?>
+                            </button>
+                        <?php endforeach; ?>
+                    </div>
+
+                    <!-- Row B (Standard - 6 Seats) -->
+                    <div class="bsc-seat-column">
+                        <div class="bsc-col-header">Row B</div>
+                        <?php foreach ( array( 'B1', 'B2', 'B3', 'B4', 'B5', 'B6' ) as $s_id ) : ?>
+                            <button type="button" class="bsc-seat-box standard" data-seat="<?php echo esc_attr( $s_id ); ?>" data-type="standard" onclick="toggleAdminSeat('<?php echo esc_attr( $s_id ); ?>', this, 'standard')">
+                                <?php echo esc_html( $s_id ); ?>
+                            </button>
+                        <?php endforeach; ?>
+                    </div>
+
+                    <!-- Row C (Standard - 6 Seats) -->
+                    <div class="bsc-seat-column">
+                        <div class="bsc-col-header">Row C</div>
+                        <?php foreach ( array( 'C1', 'C2', 'C3', 'C4', 'C5', 'C6' ) as $s_id ) : ?>
+                            <button type="button" class="bsc-seat-box standard" data-seat="<?php echo esc_attr( $s_id ); ?>" data-type="standard" onclick="toggleAdminSeat('<?php echo esc_attr( $s_id ); ?>', this, 'standard')">
+                                <?php echo esc_html( $s_id ); ?>
+                            </button>
+                        <?php endforeach; ?>
+                    </div>
+
+                    <!-- Row D (Standard - 6 Seats) -->
+                    <div class="bsc-seat-column">
+                        <div class="bsc-col-header">Row D</div>
+                        <?php foreach ( array( 'D1', 'D2', 'D3', 'D4', 'D5', 'D6' ) as $s_id ) : ?>
+                            <button type="button" class="bsc-seat-box standard" data-seat="<?php echo esc_attr( $s_id ); ?>" data-type="standard" onclick="toggleAdminSeat('<?php echo esc_attr( $s_id ); ?>', this, 'standard')">
+                                <?php echo esc_html( $s_id ); ?>
+                            </button>
+                        <?php endforeach; ?>
+                    </div>
+
+                    <div class="bsc-screen-indicator">
+                        <span>S</span><span>C</span><span>R</span><span>E</span><span>E</span><span>N</span>
+                        <svg viewBox="0 0 24 24"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+                    </div>
+                </div>
+
+                <div class="bsc-seat-legend">
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        <div style="width:12px; height:12px; border-radius:3px; background:#09231f; border:1px solid #0d9488;"></div>
+                        <span><?php esc_html_e( 'Standard', 'bsc-cinema-manager' ); ?> (<?php echo esc_html( $currency_symbol . number_format( $std_base_price, 0 ) ); ?>)</span>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        <div style="width:12px; height:12px; border-radius:3px; background:#3b1704; border:1px solid #b45309;"></div>
+                        <span><?php esc_html_e( 'VIP Recliner', 'bsc-cinema-manager' ); ?> (<?php echo esc_html( $currency_symbol . number_format( $vip_base_price, 0 ) ); ?>)</span>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        <div style="width:12px; height:12px; border-radius:3px; background:#f59e0b;"></div>
+                        <span><?php esc_html_e( 'Selected', 'bsc-cinema-manager' ); ?></span>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        <div style="width:12px; height:12px; border-radius:3px; background:#1e1215; border:1px solid #ef4444;"></div>
+                        <span><?php esc_html_e( 'Occupied', 'bsc-cinema-manager' ); ?></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- RIGHT COLUMN: Customer Details & Checkout Calculation -->
+        <div>
+            <div class="bsc-summary-sidebar">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
+                    <h3 style="margin:0; font-size:1.05rem; font-weight:800; color:#0f172a; display:flex; align-items:center; gap:8px;">
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="#0d9488"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+                        <span><?php esc_html_e( 'Customer Information', 'bsc-cinema-manager' ); ?></span>
+                    </h3>
+                    <?php if ( $is_edit ) : ?>
+                        <a href="<?php echo esc_url( admin_url( 'admin.php?page=bsc-booking&subtab=all' ) ); ?>" style="font-size:0.75rem; font-weight:700; color:#64748b; text-decoration:none;">
+                            &larr; <?php esc_html_e( 'Cancel', 'bsc-cinema-manager' ); ?>
+                        </a>
+                    <?php endif; ?>
+                </div>
+
+                <div class="bsc-form-group" style="margin-bottom:12px;">
+                    <label style="display:block; font-size:0.8rem; font-weight:700; color:#334155; margin-bottom:4px;"><?php esc_html_e( 'Customer Full Name *', 'bsc-cinema-manager' ); ?></label>
+                    <input type="text" name="customer_name" required value="<?php echo esc_attr( $current_cust_name ); ?>" style="width:100%; padding:8px 12px; border:1px solid #cbd5e1; border-radius:6px;">
+                </div>
+
+                <div class="bsc-form-group" style="margin-bottom:12px;">
+                    <label style="display:block; font-size:0.8rem; font-weight:700; color:#334155; margin-bottom:4px;"><?php esc_html_e( 'Phone Number *', 'bsc-cinema-manager' ); ?></label>
+                    <input type="text" name="customer_phone" required value="<?php echo esc_attr( $current_cust_ph ); ?>" style="width:100%; padding:8px 12px; border:1px solid #cbd5e1; border-radius:6px;">
+                </div>
+
+                <div class="bsc-form-group" style="margin-bottom:16px;">
+                    <label style="display:block; font-size:0.8rem; font-weight:700; color:#334155; margin-bottom:4px;"><?php esc_html_e( 'Email Address', 'bsc-cinema-manager' ); ?></label>
+                    <input type="email" name="customer_email" value="<?php echo esc_attr( $current_cust_em ); ?>" placeholder="customer@example.com" style="width:100%; padding:8px 12px; border:1px solid #cbd5e1; border-radius:6px;">
+                </div>
+
+                <!-- Payment Method -->
+                <div class="bsc-form-group" style="margin-bottom:16px;">
+                    <label style="display:block; font-size:0.8rem; font-weight:700; color:#334155; margin-bottom:6px;"><?php esc_html_e( 'Payment Method *', 'bsc-cinema-manager' ); ?></label>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                        <label style="display:flex; align-items:center; gap:8px; border:1px solid #cbd5e1; padding:8px 10px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:700;">
+                            <input type="radio" name="payment_method" value="Cash" <?php checked( $current_method, 'Cash' ); ?>>
+                            <span><?php esc_html_e( 'Cash Desk', 'bsc-cinema-manager' ); ?></span>
+                        </label>
+                        <label style="display:flex; align-items:center; gap:8px; border:1px solid #cbd5e1; padding:8px 10px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:700;">
+                            <input type="radio" name="payment_method" value="bKash" <?php checked( $current_method, 'bKash' ); ?>>
+                            <span><?php esc_html_e( 'bKash', 'bsc-cinema-manager' ); ?></span>
+                        </label>
+                    </div>
+                </div>
+
+                <?php if ( $is_edit ) : ?>
+                    <div class="bsc-form-group" style="margin-bottom:16px;">
+                        <label style="display:block; font-size:0.8rem; font-weight:700; color:#334155; margin-bottom:4px;"><?php esc_html_e( 'Payment Status', 'bsc-cinema-manager' ); ?></label>
+                        <select name="payment_status" style="width:100%; padding:8px 12px; border:1px solid #cbd5e1; border-radius:6px;">
+                            <option value="Confirmed" <?php selected( $current_status, 'Confirmed' ); ?>>Confirmed</option>
+                            <option value="Confirmed Online" <?php selected( $current_status, 'Confirmed Online' ); ?>>Confirmed Online</option>
+                            <option value="bKash Paid" <?php selected( $current_status, 'bKash Paid' ); ?>>bKash Paid</option>
+                        </select>
+                    </div>
                 <?php endif; ?>
-              </select>
-            </div>
 
-            <div class="bsc-form-group" style="margin-bottom:0;">
-              <label><?php esc_html_e('Screening Time', 'big-screen-cinemas'); ?> *</label>
-              <select name="manual_showtime" id="select_showtime" required>
-                <option value="18:00">06:00 PM</option>
-              </select>
-            </div>
+                <hr style="border:0; border-top:1px solid #f1f5f9; margin: 1.25rem 0;">
 
-            <div class="bsc-form-group" style="margin-bottom:0;">
-              <label><?php esc_html_e('Ticket Tier Rate', 'big-screen-cinemas'); ?> *</label>
-              <select name="manual_ticket_type" id="select_ticket_type" onchange="updateCalculations()">
-                <option value="standard" data-price="<?php echo esc_attr($std_base_price); ?>">Standard (<?php echo esc_html($currency_symbol); ?> <?php echo number_format($std_base_price, 0); ?>)</option>
-                <option value="vip" data-price="<?php echo esc_attr($vip_base_price); ?>" selected>VIP Recliner (<?php echo esc_html($currency_symbol); ?> <?php echo number_format($vip_base_price, 0); ?>)</option>
-              </select>
-            </div>
-          </div>
-        </div>
-
-        <!-- Step 2: Visual 23-Seat Matrix -->
-        <div class="bsc-seat-matrix-card">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 1rem;">
-            <div>
-              <span class="cinema-badge-pill active" style="font-size: 0.68rem;"><?php esc_html_e('BOUTIQUE 23-SEAT MATRIX', 'big-screen-cinemas'); ?></span>
-              <h4 style="font-size: 1.15rem; font-weight: 900; margin: 0.35rem 0 0 0; color:#fff;"><?php esc_html_e('Interactive Hall Seating Chart', 'big-screen-cinemas'); ?></h4>
-            </div>
-            <span id="selectedSeatsCounter" style="font-family: var(--cinema-font-mono); font-size: 0.88rem; color: #f59e0b; font-weight: 800; background:rgba(245,158,11,0.15); padding:0.25rem 0.65rem; border-radius:6px; border:1px solid rgba(245,158,11,0.3);">
-              0 Seats Picked
-            </span>
-          </div>
-
-          <div class="bsc-seat-matrix-wrapper">
-            
-            <!-- Column 1: Row A (VIP - 5 Seats) -->
-            <div class="bsc-seat-column">
-              <div class="bsc-col-header" style="color:#f59e0b;">Row A (VIP)</div>
-              <?php
-                $row_a = array('A1', 'A2', 'A3', 'A4', 'A5');
-                foreach ($row_a as $s_id):
-                  $is_occ = in_array($s_id, $all_occupied);
-              ?>
-                <button type="button" class="bsc-seat-box vip <?php echo $is_occ ? 'occupied' : ''; ?>" <?php echo $is_occ ? 'disabled' : ''; ?> data-seat="<?php echo esc_attr($s_id); ?>" data-type="vip" onclick="toggleAdminSeat('<?php echo esc_attr($s_id); ?>', this, 'vip')">
-                  <?php echo esc_html($s_id); ?>
-                </button>
-              <?php endforeach; ?>
-            </div>
-
-            <!-- Column 2: Row B (Standard - 6 Seats) -->
-            <div class="bsc-seat-column">
-              <div class="bsc-col-header">Row B</div>
-              <?php
-                $row_b = array('B1', 'B2', 'B3', 'B4', 'B5', 'B6');
-                foreach ($row_b as $s_id):
-                  $is_occ = in_array($s_id, $all_occupied);
-              ?>
-                <button type="button" class="bsc-seat-box standard <?php echo $is_occ ? 'occupied' : ''; ?>" <?php echo $is_occ ? 'disabled' : ''; ?> data-seat="<?php echo esc_attr($s_id); ?>" data-type="standard" onclick="toggleAdminSeat('<?php echo esc_attr($s_id); ?>', this, 'standard')">
-                  <?php echo esc_html($s_id); ?>
-                </button>
-              <?php endforeach; ?>
-            </div>
-
-            <!-- Column 3: Row C (Standard - 6 Seats) -->
-            <div class="bsc-seat-column">
-              <div class="bsc-col-header">Row C</div>
-              <?php
-                $row_c = array('C1', 'C2', 'C3', 'C4', 'C5', 'C6');
-                foreach ($row_c as $s_id):
-                  $is_occ = in_array($s_id, $all_occupied);
-              ?>
-                <button type="button" class="bsc-seat-box standard <?php echo $is_occ ? 'occupied' : ''; ?>" <?php echo $is_occ ? 'disabled' : ''; ?> data-seat="<?php echo esc_attr($s_id); ?>" data-type="standard" onclick="toggleAdminSeat('<?php echo esc_attr($s_id); ?>', this, 'standard')">
-                  <?php echo esc_html($s_id); ?>
-                </button>
-              <?php endforeach; ?>
-            </div>
-
-            <!-- Column 4: Row D (Standard - 6 Seats) -->
-            <div class="bsc-seat-column">
-              <div class="bsc-col-header">Row D</div>
-              <?php
-                $row_d = array('D1', 'D2', 'D3', 'D4', 'D5', 'D6');
-                foreach ($row_d as $s_id):
-                  $is_occ = in_array($s_id, $all_occupied);
-              ?>
-                <button type="button" class="bsc-seat-box standard <?php echo $is_occ ? 'occupied' : ''; ?>" <?php echo $is_occ ? 'disabled' : ''; ?> data-seat="<?php echo esc_attr($s_id); ?>" data-type="standard" onclick="toggleAdminSeat('<?php echo esc_attr($s_id); ?>', this, 'standard')">
-                  <?php echo esc_html($s_id); ?>
-                </button>
-              <?php endforeach; ?>
-            </div>
-
-            <!-- Right Screen Indicator -->
-            <div class="bsc-screen-indicator">
-              <span>S</span><span>C</span><span>R</span><span>E</span><span>E</span><span>N</span>
-              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" style="margin-top: 8px;">
-                <path d="M5 12h14M13 5l7 7-7 7"/>
-              </svg>
-            </div>
-
-          </div>
-
-          <!-- Legend -->
-          <div class="bsc-seat-legend">
-            <div class="bsc-legend-item">
-              <div class="bsc-legend-dot" style="background: #0d9488;"></div>
-              <span>Standard (<?php echo esc_html($currency_symbol); ?> <span id="legendStdPrice"><?php echo number_format($std_base_price, 0); ?></span>)</span>
-            </div>
-            <div class="bsc-legend-item">
-              <div class="bsc-legend-dot" style="background: #b45309;"></div>
-              <span>VIP Recliner (<?php echo esc_html($currency_symbol); ?> <span id="legendVipPrice"><?php echo number_format($vip_base_price, 0); ?></span>)</span>
-            </div>
-            <div class="bsc-legend-item">
-              <div class="bsc-legend-dot" style="background: #f59e0b;"></div>
-              <span>Selected</span>
-            </div>
-            <div class="bsc-legend-item">
-              <div class="bsc-legend-dot" style="background: #ef4444; opacity: 0.6;"></div>
-              <span>Occupied / Reserved</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Right: Customer Info, Payment Method & Checkout Summary -->
-      <div>
-        <div class="bsc-summary-sidebar">
-          <h3 class="cinema-panel-title" style="margin-bottom: 1.25rem;">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
-            <?php esc_html_e('Customer Information', 'big-screen-cinemas'); ?>
-          </h3>
-          
-          <div class="bsc-form-group">
-            <label><?php esc_html_e('Customer Full Name', 'big-screen-cinemas'); ?> *</label>
-            <input type="text" name="customer_name" required placeholder="e.g. Mahfuzur Rahman" value="Walk-In Guest">
-          </div>
-
-          <div class="bsc-form-group">
-            <label><?php esc_html_e('Phone Number', 'big-screen-cinemas'); ?> *</label>
-            <input type="text" name="customer_phone" required placeholder="e.g. +880 1700-000000" value="+880 ">
-          </div>
-
-          <div class="bsc-form-group">
-            <label><?php esc_html_e('Email Address', 'big-screen-cinemas'); ?></label>
-            <input type="email" name="customer_email" placeholder="customer@example.com">
-          </div>
-
-          <!-- Payment Method (Cash or bKash) -->
-          <div class="bsc-form-group" style="margin-top: 1rem;">
-            <label><?php esc_html_e('Payment Gateway / Counter Method', 'big-screen-cinemas'); ?> *</label>
-            <div class="bsc-payment-grid-two">
-              <label class="bsc-payment-option">
-                <input type="radio" name="payment_method" value="Cash" checked>
-                <div class="bsc-payment-card">
-                  <div class="icon">
-                    <svg viewBox="0 0 24 24"><path d="M12.5 6.5H5.5V17.5H18.5V6.5H12.5ZM17 16H7V8H17V16ZM12 9C10.34 9 9 10.34 9 12C9 13.66 10.34 15 12 15C13.66 15 15 13.66 15 12C15 10.34 13.66 9 12 9Z"/></svg>
-                  </div>
-                  <div class="title">Cash</div>
-                  <div class="sub">Counter Desk</div>
+                <label style="font-weight: 800; font-size: 0.75rem; text-transform: uppercase; color: #64748b; display: block; margin-bottom: 0.4rem;">
+                    <?php esc_html_e( 'Selected Seats', 'bsc-cinema-manager' ); ?>
+                </label>
+                <div class="bsc-selected-chips" id="selectedChipsDeck" style="display:flex; flex-wrap:wrap; gap:6px; min-height:30px; margin-bottom:14px;">
+                    <span style="font-size: 0.82rem; color: #94a3b8;"><?php esc_html_e( 'No seats selected yet.', 'bsc-cinema-manager' ); ?></span>
                 </div>
-              </label>
 
-              <label class="bsc-payment-option">
-                <input type="radio" name="payment_method" value="bKash">
-                <div class="bsc-payment-card">
-                  <div class="icon">
-                    <svg viewBox="0 0 24 24"><path d="M17 1.01L7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z"/></svg>
-                  </div>
-                  <div class="title">bKash</div>
-                  <div class="sub">Merchant Pay</div>
-                </div>
-              </label>
+                <table class="bsc-bill-table">
+                    <tbody>
+                        <tr>
+                            <td style="color: #64748b; padding:8px 0;">
+                                <div style="font-weight:700; color:#1e293b;"><?php esc_html_e( 'Standard Seats', 'bsc-cinema-manager' ); ?></div>
+                                <span id="lblStdQuantity" style="font-size:0.75rem; color:#94a3b8;">(0 &times; <?php echo esc_html( $currency_symbol . number_format( $std_base_price, 0 ) ); ?>)</span>
+                            </td>
+                            <td style="text-align: right; font-weight: 700; font-family: monospace; vertical-align: top; padding-top: 8px;" id="lblStdSubtotal">
+                                <?php echo esc_html( $currency_symbol ); ?> 0.00
+                            </td>
+                        </tr>
+                        <tr>
+                            <td style="color: #64748b; padding:8px 0;">
+                                <div style="font-weight:700; color:#1e293b;"><?php esc_html_e( 'VIP Recliners', 'bsc-cinema-manager' ); ?></div>
+                                <span id="lblVipQuantity" style="font-size:0.75rem; color:#94a3b8;">(0 &times; <?php echo esc_html( $currency_symbol . number_format( $vip_base_price, 0 ) ); ?>)</span>
+                            </td>
+                            <td style="text-align: right; font-weight: 700; font-family: monospace; vertical-align: top; padding-top: 8px;" id="lblVipSubtotal">
+                                <?php echo esc_html( $currency_symbol ); ?> 0.00
+                            </td>
+                        </tr>
+                        <tr>
+                            <td style="color: #64748b; padding:8px 0; font-weight:700;">
+                                <?php esc_html_e( 'Tickets Subtotal', 'bsc-cinema-manager' ); ?>
+                            </td>
+                            <td style="text-align: right; font-weight: 700; font-family: monospace;" id="lblSubtotal">
+                                <?php echo esc_html( $currency_symbol ); ?> 0.00
+                            </td>
+                        </tr>
+                        <tr>
+                            <td style="color: #64748b; padding:8px 0;">
+                                <?php esc_html_e( 'Service / VAT', 'bsc-cinema-manager' ); ?>
+                                <?php if ( $enable_tax && $service_charge_pct > 0 ) : ?>
+                                    <span style="font-size:0.75rem; color:#94a3b8;">(<?php echo esc_html( $service_charge_pct ); ?>%)</span>
+                                <?php endif; ?>
+                            </td>
+                            <td style="text-align: right; font-weight: 700; font-family: monospace;" id="lblTax">
+                                <?php echo esc_html( $currency_symbol ); ?> 0.00
+                            </td>
+                        </tr>
+                        <tr class="grand-row" style="border-top:2px solid #e2e8f0;">
+                            <td style="color: #0f172a; font-weight:800; padding:12px 0; font-size:0.95rem;"><?php echo esc_html( sprintf( __( 'Total Settlement (%s)', 'bsc-cinema-manager' ), $currency_symbol ) ); ?></td>
+                            <td style="text-align: right; color: #059669; font-family: monospace; font-weight:900; font-size:1.15rem; padding:12px 0;" id="lblGrandTotal">
+                                <?php echo esc_html( $currency_symbol ); ?> 0.00
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <button type="submit" class="button button-primary" style="background:#059669; border-color:#059669; width:100%; padding:11px; font-weight:900; font-size: 0.95rem; border-radius:8px; box-shadow:0 4px 14px rgba(5,150,105,0.2); display:flex; align-items:center; justify-content:center; gap:8px;">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/></svg>
+                    <span><?php echo $is_edit ? esc_html__( 'Update & Save Changes', 'bsc-cinema-manager' ) : esc_html__( 'Save Booking', 'bsc-cinema-manager' ); ?></span>
+                </button>
             </div>
-          </div>
-
-          <hr style="border:0; border-top:1px solid var(--cinema-border-light); margin: 1.25rem 0;">
-
-          <label style="font-weight: 800; font-size: 0.75rem; text-transform: uppercase; color: var(--cinema-text-muted); display: block; margin-bottom: 0.35rem;">
-            <?php esc_html_e('Selected Seats', 'big-screen-cinemas'); ?>
-          </label>
-          <div class="bsc-selected-chips" id="selectedChipsDeck">
-            <span style="font-size: 0.82rem; color: var(--cinema-text-muted);"><?php esc_html_e('No seats selected yet.', 'big-screen-cinemas'); ?></span>
-          </div>
-
-          <!-- Structured Pricing Breakdown -->
-          <table class="bsc-bill-table">
-            <tbody>
-              <tr>
-                <td style="color: var(--cinema-text-muted);"><?php esc_html_e('Tickets Subtotal', 'big-screen-cinemas'); ?></td>
-                <td style="text-align: right; font-weight: 700; font-family: var(--cinema-font-mono);" id="lblSubtotal">
-                  <?php echo esc_html($currency_symbol); ?> 0.00
-                </td>
-              </tr>
-              <tr>
-                <td style="color: var(--cinema-text-muted);"><?php esc_html_e('Service / Tax', 'big-screen-cinemas'); ?></td>
-                <td style="text-align: right; font-weight: 700; font-family: var(--cinema-font-mono);" id="lblTax">
-                  <?php echo esc_html($currency_symbol); ?> 0.00
-                </td>
-              </tr>
-              <tr class="grand-row">
-                <td style="color: var(--cinema-text-main);"><?php esc_html_e('Total Settlement', 'big-screen-cinemas'); ?></td>
-                <td style="text-align: right; color: var(--cinema-accent-teal); font-family: var(--cinema-font-mono);" id="lblGrandTotal">
-                  <?php echo esc_html($currency_symbol); ?> 0.00
-                </td>
-              </tr>
-            </tbody>
-          </table>
-
-          <button type="submit" class="button button-primary" style="background:#064e3b; border-color:#064e3b; width:100%; padding:11px; font-weight:900; font-size: 0.95rem; border-radius:8px; box-shadow:0 4px 14px rgba(6,78,59,0.25); display:flex; align-items:center; justify-content:center; gap:8px;">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M22 10V6c0-1.1-.9-2-2-2H4c-1.1 0-1.99.9-1.99 2v4c1.1 0 1.99.9 1.99 2s-.89 2-2 2v4c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2v-4c-1.1 0-2-.9-2-2s.9-2 2-2zm-9 7.5h-2v-2h2v2zm0-4.5h-2v-2h2v2zm0-4.5h-2v-2h2v2z"/></svg>
-            <?php esc_html_e('Issue & Print Pass', 'big-screen-cinemas'); ?>
-          </button>
         </div>
-      </div>
-
     </div>
-  </form>
+</form>
 
-  <script>
-    let adminSelectedSeats = [];
-    const VIP_PRICE = <?php echo floatval($vip_base_price); ?>;
-    const STD_PRICE = <?php echo floatval($std_base_price); ?>;
-    const CURRENCY_TAG = <?php echo wp_json_encode($currency_symbol); ?>;
+<script>
+    const adminSelectedSeats = new Map();
+    const VIP_PRICE          = <?php echo (float) $vip_base_price; ?>;
+    const STD_PRICE          = <?php echo (float) $std_base_price; ?>;
+    const TAX_RATE           = <?php echo ( $enable_tax && $service_charge_pct > 0 ) ? ( (float) $service_charge_pct / 100 ) : 0; ?>;
+    const CURRENCY_TAG       = <?php echo wp_json_encode( $currency_symbol ); ?>;
+    const SLOT_BOOKED_MAP    = <?php echo wp_json_encode( $slot_booked_seats_map ); ?>;
+    const INITIAL_SEATS      = <?php echo wp_json_encode( $preselected_seats ); ?>;
+    const PRESELECTED_TIME   = <?php echo wp_json_encode( $current_time ); ?>;
+    const PRESELECTED_DATE   = <?php echo wp_json_encode( $current_date ); ?>;
+    let movieScheduleMap     = {};
 
     function formatTimeSlot(timeStr) {
-      if (!timeStr) return '6:00 PM';
-      if (timeStr.includes(':') && timeStr.length <= 5) {
-        const [h, m] = timeStr.split(':');
-        const hour = parseInt(h, 10);
-        const ampm = hour >= 12 ? 'PM' : 'AM';
-        const formattedHour = hour % 12 || 12;
-        return `${String(formattedHour).padStart(2, '0')}:${m} ${ampm}`;
-      }
-      return timeStr;
+        if (!timeStr) return '06:00 PM';
+        const clean = String(timeStr).trim();
+        if (clean.toUpperCase().includes('AM') || clean.toUpperCase().includes('PM')) {
+            return clean;
+        }
+        if (clean.indexOf(':') !== -1 && clean.length <= 5) {
+            const parts = clean.split(':');
+            let hour = parseInt(parts[0], 10);
+            const minute = parts[1];
+            const ampm = hour >= 12 ? 'PM' : 'AM';
+            hour = hour % 12 || 12;
+            return String(hour).padStart(2, '0') + ':' + minute + ' ' + ampm;
+        }
+        return clean;
+    }
+
+    function formatFriendlyDate(dateStr) {
+        if (!dateStr) return '';
+        const parts = dateStr.split('-');
+        if (parts.length !== 3) return dateStr;
+        const d = new Date(parts[0], parts[1] - 1, parts[2]);
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const day = String(d.getDate()).padStart(2, '0');
+        return day + ' ' + months[d.getMonth()] + ' ' + d.getFullYear();
     }
 
     function onMovieChange(selectEl) {
-      const option = selectEl.options[selectEl.selectedIndex];
-      if (!option) return;
+        const option = selectEl.options[selectEl.selectedIndex];
+        if (!option) return;
 
-      const audit = option.getAttribute('data-audit') || 'Auditorium 1 (23 Seats)';
-      const showtimesRaw = option.getAttribute('data-showtimes') || '["18:00"]';
+        const showtimesRaw = option.getAttribute('data-showtimes') || '[]';
+        const dateSelect = document.getElementById('select_schedule_date');
+        dateSelect.innerHTML = '';
+        movieScheduleMap = {};
 
-      document.getElementById('input_manual_audit').value = audit;
-
-      const timeSelect = document.getElementById('select_showtime');
-      timeSelect.innerHTML = '';
-
-      let slots = [];
-      try {
-        const parsed = JSON.parse(showtimesRaw);
-        if (Array.isArray(parsed)) slots = parsed;
-        else slots = [showtimesRaw];
-      } catch(e) {
-        slots = showtimesRaw.split(',');
-      }
-
-      slots.forEach(slot => {
-        const trimmed = slot.trim();
-        if (trimmed) {
-          const opt = document.createElement('option');
-          opt.value = trimmed;
-          opt.innerText = formatTimeSlot(trimmed);
-          timeSelect.appendChild(opt);
+        let schedules = [];
+        try {
+            const parsed = JSON.parse(showtimesRaw);
+            if (Array.isArray(parsed)) schedules = parsed;
+        } catch(e) {
+            schedules = [];
         }
-      });
 
-      updateCalculations();
+        if (schedules.length > 0 && schedules[0].date && schedules[0].times) {
+            schedules.forEach(item => {
+                const d = item.date;
+                movieScheduleMap[d] = item.times || ['11:00 AM'];
+
+                const opt = document.createElement('option');
+                opt.value = d;
+                opt.textContent = formatFriendlyDate(d);
+                if (d === PRESELECTED_DATE) {
+                    opt.selected = true;
+                }
+                dateSelect.appendChild(opt);
+            });
+        } else {
+            const dateVal = PRESELECTED_DATE || '<?php echo esc_js( current_time( 'Y-m-d' ) ); ?>';
+            const flatTimes = (schedules.length > 0) ? schedules : ['11:00 AM', '02:00 PM', '05:00 PM'];
+            movieScheduleMap[dateVal] = flatTimes;
+
+            const opt = document.createElement('option');
+            opt.value = dateVal;
+            opt.textContent = formatFriendlyDate(dateVal);
+            opt.selected = true;
+            dateSelect.appendChild(opt);
+        }
+
+        if (!dateSelect.value && dateSelect.options.length > 0) {
+            dateSelect.selectedIndex = 0;
+        }
+
+        onScheduleDateChange(dateSelect);
     }
 
-    function toggleAdminSeat(seatId, btnEl, type) {
-      const price = (type === 'vip') ? VIP_PRICE : STD_PRICE;
-      const index = adminSelectedSeats.findIndex(s => s.id === seatId);
+    function onScheduleDateChange(selectEl) {
+        const selectedDate = selectEl.value;
+        const timeSelect = document.getElementById('select_showtime');
+        timeSelect.innerHTML = '';
 
-      if (index > -1) {
-        adminSelectedSeats.splice(index, 1);
-        btnEl.classList.remove('selected');
-      } else {
-        adminSelectedSeats.push({ id: seatId, type: type, price: price });
-        btnEl.classList.add('selected');
-      }
+        const times = movieScheduleMap[selectedDate] || ['11:00 AM'];
+        times.forEach(t => {
+            const cleanTime = String(t).trim();
+            const opt = document.createElement('option');
+            opt.value = cleanTime;
+            opt.textContent = formatTimeSlot(cleanTime);
+            if (cleanTime === PRESELECTED_TIME) {
+                opt.selected = true;
+            }
+            timeSelect.appendChild(opt);
+        });
 
-      updateCalculations();
+        if (!timeSelect.value && timeSelect.options.length > 0) {
+            timeSelect.selectedIndex = 0;
+        }
+
+        refreshSeatMatrixState();
     }
 
-    function updateCalculations() {
-      const chipsDeck = document.getElementById('selectedChipsDeck');
-      const counter = document.getElementById('selectedSeatsCounter');
-      const hiddenSeats = document.getElementById('input_manual_seats');
-      const hiddenAmount = document.getElementById('input_manual_amount');
+    function onShowtimeChange(selectEl) {
+        refreshSeatMatrixState();
+    }
 
-      if (adminSelectedSeats.length === 0) {
-        chipsDeck.innerHTML = `<span style="font-size: 0.82rem; color: var(--cinema-text-muted);">No seats selected yet.</span>`;
-        counter.innerText = '0 Seats Picked';
-        hiddenSeats.value = '';
-      } else {
-        chipsDeck.innerHTML = adminSelectedSeats.map(s => `<span class="bsc-seat-chip">${s.id}</span>`).join('');
-        counter.innerText = `${adminSelectedSeats.length} Seat(s) Picked`;
-        hiddenSeats.value = adminSelectedSeats.map(s => s.id).join(', ');
-      }
+    function refreshSeatMatrixState() {
+        const movieSelect = document.getElementById('select_movie');
+        const dateSelect  = document.getElementById('select_schedule_date');
+        const timeSelect  = document.getElementById('select_showtime');
 
-      const subtotal = adminSelectedSeats.reduce((acc, s) => acc + s.price, 0);
-      const tax = 0.00;
-      const grand = subtotal + tax;
+        if (!movieSelect || !dateSelect || !timeSelect) return;
 
-      document.getElementById('lblSubtotal').innerText = `${CURRENCY_TAG} ${subtotal.toFixed(2)}`;
-      document.getElementById('lblTax').innerText = `${CURRENCY_TAG} ${tax.toFixed(2)}`;
-      document.getElementById('lblGrandTotal').innerText = `${CURRENCY_TAG} ${grand.toFixed(2)}`;
+        const movieTitle = movieSelect.value.trim().toLowerCase();
+        const dateVal    = dateSelect.value;
+        const timeVal    = timeSelect.value.trim();
+        const slotKey    = `${movieTitle}_${dateVal}_${timeVal}`;
 
-      hiddenAmount.value = grand.toFixed(2);
+        const occupiedList = SLOT_BOOKED_MAP[slotKey] || [];
+        const seatButtons  = document.querySelectorAll('.bsc-seat-box');
+
+        seatButtons.forEach(btn => {
+            const seatId = btn.getAttribute('data-seat');
+
+            if (occupiedList.includes(seatId)) {
+                btn.disabled = true;
+                btn.classList.add('occupied');
+                btn.classList.remove('selected');
+                adminSelectedSeats.delete(seatId);
+            } else {
+                btn.disabled = false;
+                btn.classList.remove('occupied');
+                if (adminSelectedSeats.has(seatId)) {
+                    btn.classList.add('selected');
+                } else {
+                    btn.classList.remove('selected');
+                }
+            }
+        });
+
+        calculateTotals();
+    }
+
+    function toggleAdminSeat(seatId, btnEl, seatType) {
+        if (btnEl.disabled || btnEl.classList.contains('occupied')) return;
+
+        const isVIP = (seatType === 'vip' || seatId.charAt(0).toUpperCase() === 'A');
+        const price = isVIP ? VIP_PRICE : STD_PRICE;
+        const type  = isVIP ? 'VIP' : 'Standard';
+
+        if (adminSelectedSeats.has(seatId)) {
+            adminSelectedSeats.delete(seatId);
+            btnEl.classList.remove('selected');
+        } else {
+            adminSelectedSeats.set(seatId, { id: seatId, type: type, price: price });
+            btnEl.classList.add('selected');
+        }
+
+        calculateTotals();
+    }
+
+    function calculateTotals() {
+        const chipsDeck       = document.getElementById('selectedChipsDeck');
+        const counter         = document.getElementById('selectedSeatsCounter');
+        const hiddenSeats     = document.getElementById('input_manual_seats');
+        const hiddenSeatsSync = document.getElementById('input_seats_sync');
+        const hiddenAmount    = document.getElementById('input_manual_amount');
+        const hiddenAmtSync   = document.getElementById('input_total_amount_sync');
+        const hiddenTier      = document.getElementById('input_manual_ticket_type');
+
+        let stdCount    = 0;
+        let vipCount    = 0;
+        let stdSubtotal = 0;
+        let vipSubtotal = 0;
+        const seatNames = [];
+
+        adminSelectedSeats.forEach(s => {
+            seatNames.push(s.id);
+            if (s.type === 'VIP') {
+                vipCount++;
+                vipSubtotal += parseFloat(s.price);
+            } else {
+                stdCount++;
+                stdSubtotal += parseFloat(s.price);
+            }
+        });
+
+        if (seatNames.length === 0) {
+            chipsDeck.innerHTML = '<span style="font-size: 0.82rem; color: #94a3b8;"><?php echo esc_js( __( 'No seats selected yet.', 'bsc-cinema-manager' ) ); ?></span>';
+            counter.textContent = '0 Seats Picked';
+            hiddenSeats.value = '';
+            if (hiddenSeatsSync) hiddenSeatsSync.value = '';
+            hiddenTier.value = 'Standard';
+        } else {
+            chipsDeck.innerHTML = '';
+            seatNames.forEach(id => {
+                const chip = document.createElement('span');
+                chip.style.cssText = 'display:inline-block; padding:3px 8px; border-radius:5px; background:#ecfdf5; color:#059669; border:1px solid #a7f3d0; font-size:0.8rem; font-weight:800; font-family:monospace;';
+                chip.textContent = id;
+                chipsDeck.appendChild(chip);
+            });
+            counter.textContent = seatNames.length + ' Seat(s) Picked';
+            const joined = seatNames.join(', ');
+            hiddenSeats.value = joined;
+            if (hiddenSeatsSync) hiddenSeatsSync.value = joined;
+            hiddenTier.value = (vipCount > 0 && stdCount === 0) ? 'VIP' : (vipCount > 0 ? 'Mixed (VIP + Standard)' : 'Standard');
+        }
+
+        const subtotal = Math.round((stdSubtotal + vipSubtotal + Number.EPSILON) * 100) / 100;
+        const tax      = Math.round(((subtotal * TAX_RATE) + Number.EPSILON) * 100) / 100;
+        const grand    = Math.round(((subtotal + tax) + Number.EPSILON) * 100) / 100;
+
+        document.getElementById('lblStdQuantity').textContent = `(${stdCount} × ${CURRENCY_TAG}${STD_PRICE.toFixed(0)})`;
+        document.getElementById('lblStdSubtotal').textContent = `${CURRENCY_TAG} ${stdSubtotal.toFixed(2)}`;
+
+        document.getElementById('lblVipQuantity').textContent = `(${vipCount} × ${CURRENCY_TAG}${VIP_PRICE.toFixed(0)})`;
+        document.getElementById('lblVipSubtotal').textContent = `${CURRENCY_TAG} ${vipSubtotal.toFixed(2)}`;
+
+        document.getElementById('lblSubtotal').textContent   = `${CURRENCY_TAG} ${subtotal.toFixed(2)}`;
+        document.getElementById('lblTax').textContent        = `${CURRENCY_TAG} ${tax.toFixed(2)}`;
+        document.getElementById('lblGrandTotal').textContent = `${CURRENCY_TAG} ${grand.toFixed(2)}`;
+
+        hiddenAmount.value = grand.toFixed(2);
+        if (hiddenAmtSync) hiddenAmtSync.value = grand.toFixed(2);
     }
 
     document.addEventListener('DOMContentLoaded', function() {
-      const movieSelect = document.getElementById('select_movie');
-      if (movieSelect) {
-        onMovieChange(movieSelect);
-      }
+        // Pre-populate pre-selected seats when in Edit mode
+        if (Array.isArray(INITIAL_SEATS) && INITIAL_SEATS.length > 0) {
+            INITIAL_SEATS.forEach(st => {
+                const cleanId = String(st).trim().toUpperCase();
+                const isVIP   = (cleanId.charAt(0) === 'A');
+                adminSelectedSeats.set(cleanId, {
+                    id: cleanId,
+                    type: isVIP ? 'VIP' : 'Standard',
+                    price: isVIP ? VIP_PRICE : STD_PRICE
+                });
+            });
+        }
+
+        const movieSelect = document.getElementById('select_movie');
+        if (movieSelect) {
+            onMovieChange(movieSelect);
+        }
     });
 
-    document.getElementById('bscBookingForm').addEventListener('submit', function(e) {
-      if (adminSelectedSeats.length === 0) {
-        e.preventDefault();
-        alert('Please click and select at least one seat from the seat chart to issue tickets.');
-      }
-    });
-  </script>
-<?php endif; ?>
+    const bookingForm = document.getElementById('bscBookingForm');
+    if (bookingForm) {
+        bookingForm.addEventListener('submit', function(e) {
+            if (adminSelectedSeats.size === 0) {
+                e.preventDefault();
+                alert('<?php echo esc_js( __( 'Please select at least one seat from the seating chart.', 'bsc-cinema-manager' ) ); ?>');
+            }
+        });
+    }
+</script>
