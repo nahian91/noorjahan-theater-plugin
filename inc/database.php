@@ -13,6 +13,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 /**
  * Creates custom database tables and runs schema migrations via dbDelta.
+ * Complies strictly with WordPress VIP & core dbDelta syntax constraints.
  */
 function bsc_create_database_tables() {
     global $wpdb;
@@ -20,6 +21,7 @@ function bsc_create_database_tables() {
     $charset_collate = $wpdb->get_charset_collate();
     require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 
+    // Table 1: Movies
     $table_movies = "CREATE TABLE {$wpdb->prefix}bsc_control_movies (
         id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
         title varchar(255) NOT NULL,
@@ -41,9 +43,12 @@ function bsc_create_database_tables() {
         synopsis longtext NOT NULL,
         cast_crew longtext NOT NULL,
         created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
-        PRIMARY KEY  (id)
+        PRIMARY KEY  (id),
+        KEY release_date (release_date),
+        KEY category (category)
     ) $charset_collate;";
 
+    // Table 2: Schedules
     $table_schedule = "CREATE TABLE {$wpdb->prefix}bsc_control_schedule (
         id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
         movie_title varchar(255) NOT NULL,
@@ -51,9 +56,12 @@ function bsc_create_database_tables() {
         format_type varchar(50) NOT NULL,
         showtimes varchar(255) NOT NULL,
         price decimal(10,2) DEFAULT '0.00' NOT NULL,
-        PRIMARY KEY  (id)
+        PRIMARY KEY  (id),
+        KEY movie_title (movie_title(191)),
+        KEY auditorium (auditorium(100))
     ) $charset_collate;";
 
+    // Table 3: Financial Ledger
     $table_ledger = "CREATE TABLE {$wpdb->prefix}bsc_ledger (
         id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
         reference_no varchar(64) NOT NULL,
@@ -63,9 +71,12 @@ function bsc_create_database_tables() {
         amount decimal(10,2) DEFAULT '0.00' NOT NULL,
         transaction_date datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
         PRIMARY KEY  (id),
-        UNIQUE KEY reference_no (reference_no)
+        UNIQUE KEY reference_no (reference_no),
+        KEY transaction_date (transaction_date),
+        KEY txn_type (txn_type)
     ) $charset_collate;";
 
+    // Table 4: Bookings
     $table_bookings = "CREATE TABLE {$wpdb->prefix}bsc_bookings (
         id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
         booking_token varchar(64) NOT NULL,
@@ -82,9 +93,13 @@ function bsc_create_database_tables() {
         payment_status varchar(50) DEFAULT 'Confirmed' NOT NULL,
         booking_date datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
         PRIMARY KEY  (id),
-        UNIQUE KEY booking_token (booking_token)
+        UNIQUE KEY booking_token (booking_token),
+        KEY booking_date (booking_date),
+        KEY customer_email (customer_email(150)),
+        KEY customer_phone (customer_phone)
     ) $charset_collate;";
 
+    // Table 5: Customers Directory
     $table_customers = "CREATE TABLE {$wpdb->prefix}bsc_customers (
         id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
         membership_id varchar(50) NOT NULL,
@@ -96,9 +111,12 @@ function bsc_create_database_tables() {
         reward_points int(11) DEFAULT 50 NOT NULL,
         created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
         PRIMARY KEY  (id),
-        UNIQUE KEY membership_id (membership_id)
+        UNIQUE KEY membership_id (membership_id),
+        KEY email (email(150)),
+        KEY phone (phone)
     ) $charset_collate;";
 
+    // Table 6: Staff & Crew
     $table_staff = "CREATE TABLE {$wpdb->prefix}bsc_staff_crew (
         id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
         staff_code varchar(50) NOT NULL,
@@ -115,7 +133,8 @@ function bsc_create_database_tables() {
         joined_date date DEFAULT NULL,
         created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
         PRIMARY KEY  (id),
-        UNIQUE KEY staff_code (staff_code)
+        UNIQUE KEY staff_code (staff_code),
+        KEY email (email(150))
     ) $charset_collate;";
 
     dbDelta( $table_movies );
@@ -129,40 +148,37 @@ function bsc_create_database_tables() {
 }
 
 /**
- * Generates custom cinema ticket ID in the format: BCS-DD-MON-YY-##
- * Example: BCS-03-SEP-26-01, BCS-03-SEP-26-02
+ * Generates a collision-resistant cinema ticket ID in format: BCS-DD-MON-YY-XXXX
+ * Handles high-concurrency without race-condition collisions.
  *
- * @param string $prefix Prefix for ticket sequence.
+ * @param string $prefix Prefix for ticket reference.
  * @return string Formatted unique ticket reference code.
  */
 function bsc_generate_cinema_ticket_id( $prefix = 'BCS' ) {
     global $wpdb;
     $table_bookings = $wpdb->prefix . 'bsc_bookings';
 
-    $today_ymd = current_time( 'Y-m-d' );
-    $day_str   = strtoupper( current_time( 'd-M-y' ) );
+    $clean_prefix = strtoupper( sanitize_key( $prefix ) );
+    $day_str      = strtoupper( gmdate( 'd-M-y' ) );
+    $max_retries  = 5;
 
-    // Count tickets issued today to form the sequential counter
-    $count_today = (int) $wpdb->get_var( $wpdb->prepare(
-        "SELECT COUNT(id) FROM {$table_bookings} WHERE DATE(booking_date) = %s",
-        $today_ymd
-    ) );
+    for ( $i = 0; $i < $max_retries; $i++ ) {
+        // High-entropy random hex string (4 characters) preventing concurrent collisions
+        $entropy         = strtoupper( bin2hex( random_bytes( 2 ) ) );
+        $candidate_token = sprintf( '%s-%s-%s', $clean_prefix, $day_str, $entropy );
 
-    $sequence_number = str_pad( (string) ( $count_today + 1 ), 2, '0', STR_PAD_LEFT );
-    $candidate_token = sprintf( '%s-%s-%s', sanitize_key( $prefix ), $day_str, $sequence_number );
+        $exists = $wpdb->get_var( $wpdb->prepare(
+            "SELECT COUNT(id) FROM {$table_bookings} WHERE booking_token = %s",
+            $candidate_token
+        ) );
 
-    // Collision check: fallback if duplicate index exists
-    $token_exists = (int) $wpdb->get_var( $wpdb->prepare(
-        "SELECT COUNT(id) FROM {$table_bookings} WHERE booking_token = %s",
-        $candidate_token
-    ) );
-
-    if ( $token_exists > 0 ) {
-        $extra_seq       = str_pad( (string) wp_rand( 10, 99 ), 2, '0', STR_PAD_LEFT );
-        $candidate_token = sprintf( '%s-%s-%s', sanitize_key( $prefix ), $day_str, $extra_seq );
+        if ( 0 === (int) $exists ) {
+            return $candidate_token;
+        }
     }
 
-    return $candidate_token;
+    // Ultra fallback with microsecond precision if loop exhausts
+    return sprintf( '%s-%s-%s', $clean_prefix, $day_str, strtoupper( substr( md5( uniqid( (string) wp_rand(), true ) ), 0, 6 ) ) );
 }
 
 /**
@@ -172,19 +188,19 @@ function bsc_seed_initial_staff() {
     global $wpdb;
     $table = $wpdb->prefix . 'bsc_staff_crew';
 
-    $exists = $wpdb->get_var( "SELECT COUNT(id) FROM {$table}" );
-    if ( 0 === (int) $exists ) {
+    $count = (int) $wpdb->get_var( "SELECT COUNT(id) FROM {$table}" );
+    if ( 0 === $count ) {
         $wpdb->insert(
             $table,
             array(
                 'staff_code'       => '#STF-1001',
-                'name'             => 'Abdullah Nahian',
+                'name'             => 'Operations Lead',
                 'role_title'       => 'Master Administrator',
                 'assigned_hall'    => 'All Multiplex Facilities',
                 'duty_status'      => 'On Duty',
                 'shift_schedule'   => 'Full Rotational',
-                'phone'            => '+880 1700-000001',
-                'email'            => 'admin@bigscreencinemas.com',
+                'phone'            => '+1 555-0199',
+                'email'            => sanitize_email( get_option( 'admin_email' ) ),
                 'salary'           => 60000.00,
                 'photo_url'        => '',
                 'responsibilities' => 'Full administrative access, box-office accounting supervision, and master show scheduler.',

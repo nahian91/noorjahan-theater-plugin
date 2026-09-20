@@ -21,13 +21,10 @@ define( 'BSC_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'BSC_ADMIN_CAP', 'manage_options' );
 
 // =============================================================================
-// DATABASE LAYER
+// DATABASE LAYER & MODULE INCLUDES
 // =============================================================================
 require_once BSC_PLUGIN_PATH . 'inc/database.php';
 
-// =============================================================================
-// ADMIN MODULES
-// =============================================================================
 require_once BSC_PLUGIN_PATH . 'admin/page-dashboard.php';
 require_once BSC_PLUGIN_PATH . 'admin/page-booking.php';
 require_once BSC_PLUGIN_PATH . 'admin/page-movies.php';
@@ -38,7 +35,7 @@ require_once BSC_PLUGIN_PATH . 'admin/page-users.php';
 require_once BSC_PLUGIN_PATH . 'admin/page-settings.php';
 
 // =============================================================================
-// ACTIVATION HOOK
+// ACTIVATION & LIFECYCLE HOOKS
 // =============================================================================
 register_activation_hook( __FILE__, 'bsc_activate_plugin' );
 function bsc_activate_plugin() {
@@ -47,6 +44,9 @@ function bsc_activate_plugin() {
     }
 }
 
+// =============================================================================
+// CORE UTILITIES & HELPERS
+// =============================================================================
 function bsc_generate_secure_token( $prefix = 'BSC' ) {
     return sprintf( '#%s-%s-TX', sanitize_key( $prefix ), strtoupper( wp_generate_password( 8, false, false ) ) );
 }
@@ -55,13 +55,10 @@ function bsc_is_cinema_screen() {
     if ( ! is_admin() ) {
         return false;
     }
-    $page = isset( $_GET['page'] ) ? sanitize_key( $_GET['page'] ) : '';
+    $page = isset( $_GET['page'] ) ? sanitize_key( wp_unslash( $_GET['page'] ) ) : '';
     return ( 0 === strpos( $page, 'bsc-' ) );
 }
 
-/**
- * Helper to locate the logo file inside the assets/ directory
- */
 function bsc_get_custom_logo_url() {
     $extensions = array( 'svg', 'png', 'webp', 'jpg' );
     foreach ( $extensions as $ext ) {
@@ -74,7 +71,7 @@ function bsc_get_custom_logo_url() {
 }
 
 // =============================================================================
-// LOGIN REDIRECT: ROUTE USERS DIRECTLY TO BSC DASHBOARD AFTER LOGIN
+// LOGIN REDIRECTION & ROUTING
 // =============================================================================
 add_filter( 'login_redirect', 'bsc_custom_login_redirect', 999, 3 );
 function bsc_custom_login_redirect( $redirect_to, $requested_redirect_to, $user ) {
@@ -89,17 +86,58 @@ function bsc_custom_login_redirect( $redirect_to, $requested_redirect_to, $user 
     return home_url();
 }
 
+add_action( 'init', 'bsc_handle_custom_admin_slug' );
+function bsc_handle_custom_admin_slug() {
+    if ( empty( $_SERVER['REQUEST_URI'] ) ) {
+        return;
+    }
+
+    $raw_uri    = esc_url_raw( wp_unslash( $_SERVER['REQUEST_URI'] ) );
+    $path       = wp_parse_url( $raw_uri, PHP_URL_PATH );
+    $clean_path = untrailingslashit( (string) $path );
+
+    if ( in_array( $clean_path, array( '/admin', '/a/admin' ), true ) ) {
+        $target_url = admin_url( 'admin.php?page=bsc-dashboard' );
+        if ( is_user_logged_in() ) {
+            wp_safe_redirect( $target_url );
+        } else {
+            wp_safe_redirect( wp_login_url( $target_url ) );
+        }
+        exit;
+    }
+}
+
+// Intercept admin logout page early before rendering headers
+add_action( 'admin_init', 'bsc_handle_logout_action' );
+function bsc_handle_logout_action() {
+    $page = isset( $_GET['page'] ) ? sanitize_key( wp_unslash( $_GET['page'] ) ) : '';
+    if ( 'bsc-logout' === $page ) {
+        wp_safe_redirect( wp_logout_url( home_url() ) );
+        exit;
+    }
+}
+
 // =============================================================================
-// WP-LOGIN: CUSTOM LOGO FROM ASSETS, MATH CAPTCHA & MODERN UI/UX
+// LOGIN SCREEN STYLING & SECURE MATH CAPTCHA (OWASP / ANTI-REPLAY)
 // =============================================================================
-add_action( 'login_enqueue_scripts', 'bsc_custom_login_styles' );
-function bsc_custom_login_styles() {
+add_action( 'login_enqueue_scripts', 'bsc_enqueue_login_styles' );
+function bsc_enqueue_login_styles() {
+    wp_enqueue_style(
+        'bsc-login-fonts',
+        'https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap',
+        array(),
+        null
+    );
+
+    wp_register_style( 'bsc-custom-login', false, array( 'bsc-login-fonts' ), BSC_VERSION );
+    wp_enqueue_style( 'bsc-custom-login' );
+
     $logo_url = bsc_get_custom_logo_url();
-    ?>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
-    <style type="text/css">
+    $logo_css = ! empty( $logo_url )
+        ? "background-image: url('" . esc_url_raw( $logo_url ) . "') !important; background-size: contain !important;"
+        : 'background-image: url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'%2314b8a6\'%3E%3Cpath d=\'M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4h-4zm-4.5 10.5v-5l4 2.5-4 2.5z\'/%3E%3C/svg%3E") !important; background-size: 80px 80px !important;';
+
+    $custom_css = "
         body.login {
             background: radial-gradient(circle at top right, #0f373d 0%, #081a20 40%, #03080a 100%) !important;
             font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif !important;
@@ -110,9 +148,8 @@ function bsc_custom_login_styles() {
             position: relative;
             overflow-x: hidden;
         }
-
         body.login::before {
-            content: "";
+            content: '';
             position: absolute;
             width: 450px;
             height: 450px;
@@ -123,22 +160,14 @@ function bsc_custom_login_styles() {
             pointer-events: none;
             z-index: 0;
         }
-
         #login {
             position: relative;
             z-index: 1;
             padding: 30px 20px !important;
             width: 400px !important;
         }
-
         #login h1 a {
-            <?php if ( ! empty( $logo_url ) ) : ?>
-                background-image: url('<?php echo esc_url( $logo_url ); ?>') !important;
-                background-size: contain !important;
-            <?php else : ?>
-                background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2314b8a6'%3E%3Cpath d='M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4h-4zm-4.5 10.5v-5l4 2.5-4 2.5z'/%3E%3C/svg%3E") !important;
-                background-size: 80px 80px !important;
-            <?php endif; ?>
+            {$logo_css}
             background-position: center !important;
             background-repeat: no-repeat !important;
             width: 140px !important;
@@ -146,13 +175,9 @@ function bsc_custom_login_styles() {
             margin: 0 auto 12px auto !important;
             transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
         }
-
-        #login h1 a:hover {
-            transform: scale(1.05);
-        }
-
+        #login h1 a:hover { transform: scale(1.05); }
         #login h1::after {
-            content: "BIG SCREEN CINEMAS";
+            content: 'BIG SCREEN CINEMAS';
             display: block;
             font-family: 'Space Grotesk', sans-serif;
             font-size: 1.15rem;
@@ -163,7 +188,6 @@ function bsc_custom_login_styles() {
             text-align: center;
             text-shadow: 0 2px 10px rgba(0,0,0,0.5);
         }
-
         .login form {
             background: rgba(15, 23, 42, 0.75) !important;
             border: 1px solid rgba(255, 255, 255, 0.12) !important;
@@ -174,7 +198,6 @@ function bsc_custom_login_styles() {
             backdrop-filter: blur(20px) !important;
             -webkit-backdrop-filter: blur(20px) !important;
         }
-
         .login form label {
             color: #94a3b8 !important;
             font-weight: 700 !important;
@@ -182,10 +205,7 @@ function bsc_custom_login_styles() {
             text-transform: uppercase;
             letter-spacing: 0.05em;
         }
-
-        .login input[type="text"],
-        .login input[type="password"],
-        .login input[type="number"] {
+        .login input[type='text'], .login input[type='password'], .login input[type='number'] {
             background: rgba(2, 6, 23, 0.7) !important;
             border: 1px solid rgba(255, 255, 255, 0.15) !important;
             border-radius: 10px !important;
@@ -196,17 +216,12 @@ function bsc_custom_login_styles() {
             box-shadow: none !important;
             transition: all 0.25s ease !important;
         }
-
-        .login input[type="text"]:focus,
-        .login input[type="password"]:focus,
-        .login input[type="number"]:focus {
+        .login input[type='text']:focus, .login input[type='password']:focus, .login input[type='number']:focus {
             border-color: #14b8a6 !important;
             background: rgba(2, 6, 23, 0.95) !important;
             box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.3) !important;
             outline: none !important;
         }
-
-        /* Number Math Captcha Card */
         .bsc-captcha-wrapper {
             margin: 20px 0 14px 0;
             padding: 14px 16px;
@@ -214,7 +229,6 @@ function bsc_custom_login_styles() {
             border: 1px dashed rgba(20, 184, 166, 0.45);
             border-radius: 12px;
         }
-
         .bsc-captcha-label {
             display: flex;
             align-items: center;
@@ -224,7 +238,6 @@ function bsc_custom_login_styles() {
             font-weight: 700;
             color: #cbd5e1;
         }
-
         .bsc-captcha-equation {
             font-family: 'Space Grotesk', monospace;
             background: #0d9488;
@@ -236,8 +249,6 @@ function bsc_custom_login_styles() {
             letter-spacing: 0.05em;
             box-shadow: 0 2px 8px rgba(13, 148, 136, 0.4);
         }
-
-        /* Action Buttons */
         .wp-core-ui .button-primary {
             width: 100% !important;
             margin-top: 14px !important;
@@ -254,15 +265,12 @@ function bsc_custom_login_styles() {
             box-shadow: 0 4px 14px rgba(13, 148, 136, 0.4) !important;
             cursor: pointer !important;
         }
-
         .wp-core-ui .button-primary:hover {
             background: linear-gradient(135deg, #14b8a6 0%, #0d9488 100%) !important;
             transform: translateY(-2px) !important;
             box-shadow: 0 6px 20px rgba(20, 184, 166, 0.5) !important;
         }
-
-        .login #login_error,
-        .login .message {
+        .login #login_error, .login .message {
             background: rgba(15, 23, 42, 0.9) !important;
             border-left: 4px solid #ef4444 !important;
             color: #fca5a5 !important;
@@ -270,34 +278,21 @@ function bsc_custom_login_styles() {
             backdrop-filter: blur(10px) !important;
             box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4) !important;
         }
-
         .login .message {
             border-left-color: #14b8a6 !important;
             color: #e2e8f0 !important;
         }
-
-        .login #nav, .login #backtoblog {
-            text-align: center;
-        }
-
-        .login #nav a,
-        .login #backtoblog a {
+        .login #nav, .login #backtoblog { text-align: center; }
+        .login #nav a, .login #backtoblog a {
             color: #64748b !important;
             font-weight: 600;
             font-size: 0.85rem;
             transition: color 0.2s;
         }
-
-        .login #nav a:hover,
-        .login #backtoblog a:hover {
-            color: #14b8a6 !important;
-        }
-
-        .login .privacy-policy-page-link {
-            display: none !important;
-        }
-    </style>
-    <?php
+        .login #nav a:hover, .login #backtoblog a:hover { color: #14b8a6 !important; }
+        .login .privacy-policy-page-link { display: none !important; }
+    ";
+    wp_add_inline_style( 'bsc-custom-login', $custom_css );
 }
 
 add_filter( 'login_headerurl', 'bsc_custom_login_logo_url' );
@@ -312,12 +307,14 @@ function bsc_custom_login_logo_title() {
 
 add_action( 'login_form', 'bsc_render_number_captcha_field' );
 function bsc_render_number_captcha_field() {
-    $num1 = wp_rand( 2, 9 );
-    $num2 = wp_rand( 1, 9 );
-    $sum  = $num1 + $num2;
+    $num1      = wp_rand( 2, 9 );
+    $num2      = wp_rand( 1, 9 );
+    $sum       = $num1 + $num2;
+    $timestamp = time();
 
-    $secret_key  = defined( 'NONCE_KEY' ) ? NONCE_KEY : 'bsc_captcha_salt';
-    $secure_hash = hash_hmac( 'sha256', (string) $sum, $secret_key );
+    // Replay-proof signature bound to current timestamp & secure salt
+    $hash          = hash_hmac( 'sha256', "{$sum}|{$timestamp}", wp_salt( 'nonce' ) );
+    $token_payload = base64_encode( "{$hash}:{$timestamp}" );
     ?>
     <div class="bsc-captcha-wrapper">
         <label class="bsc-captcha-label" for="bsc_captcha_answer">
@@ -325,7 +322,7 @@ function bsc_render_number_captcha_field() {
             <span class="bsc-captcha-equation"><?php echo esc_html( "{$num1} + {$num2} = ?" ); ?></span>
         </label>
         <input type="number" name="bsc_captcha_answer" id="bsc_captcha_answer" class="input" placeholder="<?php esc_attr_e( 'Answer', 'bcs-screen-manager' ); ?>" required autocomplete="off" />
-        <input type="hidden" name="bsc_captcha_hash" value="<?php echo esc_attr( $secure_hash ); ?>" />
+        <input type="hidden" name="bsc_captcha_token" value="<?php echo esc_attr( $token_payload ); ?>" />
     </div>
     <?php
 }
@@ -336,79 +333,84 @@ function bsc_verify_number_captcha( $user, $username, $password ) {
         return $user;
     }
 
-    $answer = isset( $_POST['bsc_captcha_answer'] ) ? sanitize_text_field( wp_unslash( $_POST['bsc_captcha_answer'] ) ) : '';
-    $hash   = isset( $_POST['bsc_captcha_hash'] ) ? sanitize_text_field( wp_unslash( $_POST['bsc_captcha_hash'] ) ) : '';
+    $answer  = isset( $_POST['bsc_captcha_answer'] ) ? sanitize_text_field( wp_unslash( $_POST['bsc_captcha_answer'] ) ) : '';
+    $payload = isset( $_POST['bsc_captcha_token'] ) ? sanitize_text_field( wp_unslash( $_POST['bsc_captcha_token'] ) ) : '';
 
-    if ( '' === $answer || '' === $hash ) {
-        return new WP_Error( 'bsc_captcha_missing', '<strong>Security Check:</strong> Please enter the math captcha answer.' );
+    if ( '' === $answer || '' === $payload ) {
+        return new WP_Error( 'bsc_captcha_missing', '<strong>' . esc_html__( 'Security Check:', 'bcs-screen-manager' ) . '</strong> ' . esc_html__( 'Please solve the math verification problem.', 'bcs-screen-manager' ) );
     }
 
-    $secret_key    = defined( 'NONCE_KEY' ) ? NONCE_KEY : 'bsc_captcha_salt';
-    $expected_hash = hash_hmac( 'sha256', (string) intval( $answer ), $secret_key );
+    $decoded = base64_decode( $payload, true );
+    if ( false === $decoded || false === strpos( $decoded, ':' ) ) {
+        return new WP_Error( 'bsc_captcha_invalid', '<strong>' . esc_html__( 'Security Check:', 'bcs-screen-manager' ) . '</strong> ' . esc_html__( 'Malformed verification token.', 'bcs-screen-manager' ) );
+    }
+
+    list( $hash, $timestamp ) = explode( ':', $decoded, 2 );
+    $timestamp = (int) $timestamp;
+
+    // Tokens expire after 300 seconds (5 minutes) or if timestamp is in the future
+    if ( ( time() - $timestamp ) > 300 || $timestamp > ( time() + 30 ) ) {
+        return new WP_Error( 'bsc_captcha_expired', '<strong>' . esc_html__( 'Security Check:', 'bcs-screen-manager' ) . '</strong> ' . esc_html__( 'Captcha expired. Please refresh and try again.', 'bcs-screen-manager' ) );
+    }
+
+    $expected_hash = hash_hmac( 'sha256', (int) $answer . "|{$timestamp}", wp_salt( 'nonce' ) );
 
     if ( ! hash_equals( $expected_hash, $hash ) ) {
-        return new WP_Error( 'bsc_captcha_incorrect', '<strong>Security Check:</strong> Incorrect answer. Please try again.' );
+        return new WP_Error( 'bsc_captcha_incorrect', '<strong>' . esc_html__( 'Security Check:', 'bcs-screen-manager' ) . '</strong> ' . esc_html__( 'Incorrect math answer. Please try again.', 'bcs-screen-manager' ) );
     }
 
     return $user;
 }
 
 // =============================================================================
-// FULLSCREEN VIEWPORT & SIDEBAR UI STYLES
+// ADMIN ASSETS & VIEWPORT STYLING
 // =============================================================================
-add_action( 'admin_head', 'bsc_apply_fullscreen_viewport_styles' );
-function bsc_apply_fullscreen_viewport_styles() {
+add_action( 'admin_enqueue_scripts', 'bsc_enqueue_admin_assets' );
+function bsc_enqueue_admin_assets( $hook ) {
     if ( ! bsc_is_cinema_screen() ) {
         return;
     }
-    ?>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
-    <style id="bsc-fullscreen-cinema-override">
-        #adminmenumain,
-        #adminmenuback,
-        #adminmenuwrap,
-        #wpadminbar,
-        #wpfooter,
-        .notice,
-        div.error,
-        div.updated {
+
+    wp_enqueue_media();
+
+    // 1. Google Fonts
+    wp_enqueue_style(
+        'bsc-admin-fonts',
+        'https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap',
+        array(),
+        null
+    );
+
+    // 2. Custom CSS Stylesheet (assets/css/style.css) if present
+    if ( file_exists( BSC_PLUGIN_PATH . 'assets/css/style.css' ) ) {
+        wp_enqueue_style(
+            'bsc-admin-style',
+            BSC_PLUGIN_URL . 'assets/css/style.css',
+            array( 'bsc-admin-fonts' ),
+            BSC_VERSION
+        );
+    }
+
+    // 3. Cinema Mode Viewport Styles
+    wp_register_style( 'bsc-admin-cinema-theme', false, array( 'bsc-admin-fonts' ), BSC_VERSION );
+    wp_enqueue_style( 'bsc-admin-cinema-theme' );
+
+    $admin_css = "
+        html.wp-toolbar { padding: 0; }
+        
+        /* Hide WordPress admin menu and toolbar on ALL bsc- pages */
+        body[class*=\"_page_bsc-\"] #adminmenumain, 
+        body[class*=\"_page_bsc-\"] #adminmenuback, 
+        body[class*=\"_page_bsc-\"] #adminmenuwrap, 
+        body[class*=\"_page_bsc-\"] #wpadminbar, 
+        body[class*=\"_page_bsc-\"] #wpfooter {
             display: none !important;
         }
-
-        html, html.wp-toolbar {
-            padding-top: 0 !important;
-            margin: 0 !important;
-            height: 100vh !important;
-            width: 100vw !important;
-            overflow: hidden !important;
-            background: #0f172a !important;
-        }
-
-        body.wp-admin {
-            margin: 0 !important;
+        body[class*=\"_page_bsc-\"] #wpcontent, 
+        body[class*=\"_page_bsc-\"] #wpbody, 
+        body[class*=\"_page_bsc-\"] #wpbody-content {
+            margin-left: 0 !important;
             padding: 0 !important;
-            height: 100vh !important;
-            width: 100vw !important;
-            overflow: hidden !important;
-            background: #f8fafc !important;
-        }
-
-        #wpwrap {
-            height: 100vh !important;
-            width: 100vw !important;
-            overflow: hidden !important;
-        }
-
-        #wpcontent, #wpbody, #wpbody-content {
-            margin: 0 !important;
-            padding: 0 !important;
-            height: 100vh !important;
-            width: 100vw !important;
-            float: none !important;
-            overflow: hidden !important;
-            min-height: 100vh !important;
         }
 
         :root {
@@ -432,25 +434,14 @@ function bsc_apply_fullscreen_viewport_styles() {
             --cinema-font-main: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
             --cinema-font-mono: 'Space Grotesk', monospace;
         }
-
         .bsc-app-wrap {
             display: flex;
-            width: 100vw;
-            height: 100vh;
+            width: 100%;
             background-color: var(--cinema-bg-canvas);
             font-family: var(--cinema-font-main);
             color: var(--cinema-text-main);
             box-sizing: border-box;
-            overflow: hidden;
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            z-index: 9999;
         }
-
-        /* Modern Dark Cinema Sidebar */
         .bsc-sidebar {
             width: 280px;
             background: var(--cinema-sidebar-bg);
@@ -459,11 +450,8 @@ function bsc_apply_fullscreen_viewport_styles() {
             flex-direction: column;
             justify-content: space-between;
             flex-shrink: 0;
-            height: 100vh;
-            box-sizing: border-box;
             box-shadow: 4px 0 24px rgba(0, 0, 0, 0.15);
         }
-
         .bsc-sidebar-header {
             padding: 1.5rem 1.4rem;
             display: flex;
@@ -471,19 +459,16 @@ function bsc_apply_fullscreen_viewport_styles() {
             justify-content: space-between;
             border-bottom: 1px solid var(--cinema-border-dark);
         }
-
         .bsc-brand-box {
             display: flex;
             align-items: center;
             gap: 12px;
         }
-
         .bsc-brand-logo {
             max-height: 40px;
             max-width: 120px;
             object-fit: contain;
         }
-
         .bsc-brand-fallback-icon {
             width: 38px;
             height: 38px;
@@ -495,13 +480,11 @@ function bsc_apply_fullscreen_viewport_styles() {
             color: #fff;
             box-shadow: 0 4px 12px rgba(13, 148, 136, 0.3);
         }
-
         .bsc-brand-fallback-icon svg {
             width: 20px;
             height: 20px;
             fill: #ffffff;
         }
-
         .bsc-brand-titles h4 {
             margin: 0;
             font-family: var(--cinema-font-mono);
@@ -510,7 +493,6 @@ function bsc_apply_fullscreen_viewport_styles() {
             color: #ffffff;
             letter-spacing: 0.05em;
         }
-
         .bsc-brand-titles span {
             font-size: 0.7rem;
             color: #14b8a6;
@@ -518,7 +500,6 @@ function bsc_apply_fullscreen_viewport_styles() {
             text-transform: uppercase;
             letter-spacing: 0.05em;
         }
-
         .bsc-admin-pill-card {
             margin: 1rem 1.25rem 0.5rem 1.25rem;
             padding: 0.75rem 1rem;
@@ -529,7 +510,6 @@ function bsc_apply_fullscreen_viewport_styles() {
             align-items: center;
             gap: 0.75rem;
         }
-
         .bsc-avatar-sm {
             width: 36px;
             height: 36px;
@@ -543,20 +523,17 @@ function bsc_apply_fullscreen_viewport_styles() {
             font-weight: 800;
             font-size: 0.8rem;
         }
-
         .bsc-admin-name {
             font-weight: 700;
             font-size: 0.85rem;
             color: #f1f5f9;
             line-height: 1.2;
         }
-
         .bsc-admin-role {
             font-size: 0.7rem;
             color: #64748b;
             font-weight: 600;
         }
-
         .bsc-nav-list {
             list-style: none;
             padding: 0.8rem 1rem;
@@ -564,9 +541,7 @@ function bsc_apply_fullscreen_viewport_styles() {
             display: flex;
             flex-direction: column;
             gap: 0.3rem;
-            overflow-y: auto;
         }
-
         .bsc-nav-item a {
             display: flex;
             align-items: center;
@@ -579,89 +554,35 @@ function bsc_apply_fullscreen_viewport_styles() {
             text-decoration: none;
             transition: all 0.2s ease;
         }
-
         .bsc-nav-item a:hover {
             background: rgba(255, 255, 255, 0.06);
             color: #ffffff;
             transform: translateX(3px);
         }
-
         .bsc-nav-item.active a {
             background: linear-gradient(135deg, #0d9488 0%, #0f766e 100%);
             color: #ffffff;
             box-shadow: 0 4px 14px rgba(13, 148, 136, 0.4);
         }
-
         .bsc-nav-item svg {
             width: 19px;
             height: 19px;
             fill: currentColor;
             flex-shrink: 0;
         }
-
         .bsc-sidebar-bottom {
             padding: 1rem 1rem 1.2rem 1rem;
             border-top: 1px solid var(--cinema-border-dark);
             margin-top: auto;
         }
-
-        /* Canvas */
         .bsc-canvas {
             flex: 1;
-            height: 100vh;
-            padding: 2.5rem 3rem;
-            overflow-y: auto;
+            padding: 25px;
             box-sizing: border-box;
-            position: relative;
+            background: var(--cinema-bg-canvas);
         }
-
-        .cinema-panel {
-            background: var(--cinema-card-bg);
-            border: 1px solid var(--cinema-border);
-            border-radius: var(--cinema-radius-md);
-            padding: 2rem;
-            margin-bottom: 2rem;
-            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02), 0 2px 4px -2px rgba(0,0,0,0.02);
-        }
-
-        .cinema-panel-title {
-            font-size: 1.25rem;
-            font-weight: 800;
-            color: var(--cinema-text-main);
-            margin: 0 0 1rem 0;
-            letter-spacing: -0.01em;
-        }
-
-        .bsc-exit-fullscreen-badge {
-            position: fixed;
-            bottom: 20px;
-            right: 24px;
-            z-index: 100000;
-            background: rgba(15, 23, 42, 0.9);
-            color: #f8fafc;
-            border: 1px solid rgba(255, 255, 255, 0.15);
-            padding: 9px 16px;
-            border-radius: 9999px;
-            font-size: 0.75rem;
-            font-weight: 700;
-            text-decoration: none;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
-            backdrop-filter: blur(8px);
-            transition: all 0.2s ease;
-        }
-
-        .bsc-exit-fullscreen-badge:hover {
-            background: #0d9488;
-            color: #ffffff;
-            border-color: #0d9488;
-            transform: translateY(-2px);
-            box-shadow: 0 10px 25px rgba(13, 148, 136, 0.4);
-        }
-    </style>
-    <?php
+    ";
+    wp_add_inline_style( 'bsc-admin-cinema-theme', $admin_css );
 }
 
 // =============================================================================
@@ -669,34 +590,49 @@ function bsc_apply_fullscreen_viewport_styles() {
 // =============================================================================
 function bsc_render_page_shell_open( $current_page ) {
     $logout_url = wp_logout_url( home_url() );
-    $wp_admin_exit_url = admin_url( 'index.php' );
-    $logo_url = bsc_get_custom_logo_url();
+    $logo_url   = bsc_get_custom_logo_url();
+
+    // Contextual Current User Info
+    $current_user = wp_get_current_user();
+    $display_name = $current_user->exists() ? $current_user->display_name : __( 'Cinema Staff', 'bcs-screen-manager' );
+    
+    // Initials generation (safe two-letter extraction with fallback polyfill)
+    $words    = preg_split( "/\s+/", trim( $display_name ) );
+    $initials = '';
+    if ( ! empty( $words[0] ) ) {
+        $initials .= function_exists( 'mb_substr' ) ? mb_substr( $words[0], 0, 1 ) : substr( $words[0], 0, 1 );
+    }
+    if ( count( $words ) > 1 && ! empty( $words[1] ) ) {
+        $initials .= function_exists( 'mb_substr' ) ? mb_substr( $words[1], 0, 1 ) : substr( $words[1], 0, 1 );
+    }
+    $initials = strtoupper( $initials ?: 'OP' );
+
+    $role = ! empty( $current_user->roles ) ? ucwords( str_replace( '_', ' ', $current_user->roles[0] ) ) : __( 'Operator', 'bcs-screen-manager' );
     ?>
     <div class="bsc-app-wrap">
-        <!-- SIDEBAR -->
         <aside class="bsc-sidebar">
             <div>
                 <div class="bsc-sidebar-header">
                     <div class="bsc-brand-box">
                         <?php if ( ! empty( $logo_url ) ) : ?>
-                            <img src="<?php echo esc_url( $logo_url ); ?>" alt="Logo" class="bsc-brand-logo" />
+                            <img src="<?php echo esc_url( $logo_url ); ?>" alt="<?php esc_attr_e( 'Logo', 'bcs-screen-manager' ); ?>" class="bsc-brand-logo" />
                         <?php else : ?>
-                            <div class="bsc-brand-fallback-icon">
+                            <div class="bsc-brand-fallback-icon" aria-hidden="true">
                                 <svg viewBox="0 0 24 24"><path d="M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4h-4z"/></svg>
                             </div>
                         <?php endif; ?>
                         <div class="bsc-brand-titles">
-                            <h4>CINEMA SUITE</h4>
-                            <span>● Live Operations</span>
+                            <h4><?php esc_html_e( 'Big Sreen Cinema', 'bcs-screen-manager' ); ?></h4>
+                            <span><?php esc_html_e( '● Live Operations', 'bcs-screen-manager' ); ?></span>
                         </div>
                     </div>
                 </div>
 
                 <div class="bsc-admin-pill-card">
-                    <div class="bsc-avatar-sm">AN</div>
+                    <div class="bsc-avatar-sm"><?php echo esc_html( $initials ); ?></div>
                     <div>
-                        <div class="bsc-admin-name">Abdullah Nahian</div>
-                        <div class="bsc-admin-role"><?php esc_html_e( 'Administrator', 'bcs-screen-manager' ); ?></div>
+                        <div class="bsc-admin-name"><?php echo esc_html( $display_name ); ?></div>
+                        <div class="bsc-admin-role"><?php echo esc_html( $role ); ?></div>
                     </div>
                 </div>
 
@@ -749,10 +685,6 @@ function bsc_render_page_shell_open( $current_page ) {
                             <span><?php esc_html_e( 'Settings', 'bcs-screen-manager' ); ?></span>
                         </a>
                     </li>
-                </ul>
-            </div>
-            <div class="bsc-sidebar-bottom">
-                <ul class="bsc-nav-list" style="padding:0;">
                     <li class="bsc-nav-item">
                         <a href="<?php echo esc_url( $logout_url ); ?>" style="color:#f87171;">
                             <svg viewBox="0 0 24 24"><path d="M10.09 15.59L11.5 17l5-5-5-5-1.41 1.41L12.67 11H3v2h9.67l-2.58 2.59zM19 3H5c-1.11 0-2 .9-2 2v4h2V5h14v14H5v-4H3v4c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"/></svg>
@@ -761,13 +693,10 @@ function bsc_render_page_shell_open( $current_page ) {
                     </li>
                 </ul>
             </div>
+            <div class="bsc-sidebar-bottom" style="display:none;"></div>
         </aside>
 
-        <!-- CANVAS BODY -->
         <main class="bsc-canvas">
-            <a href="<?php echo esc_url( $wp_admin_exit_url ); ?>" class="bsc-exit-fullscreen-badge" title="<?php esc_attr_e( 'Return to standard WP admin', 'bcs-screen-manager' ); ?>">
-                <span>←</span> <?php esc_html_e( 'Exit Cinema Mode', 'bcs-screen-manager' ); ?>
-            </a>
     <?php
 }
 
@@ -803,44 +732,15 @@ function bsc_register_master_menu() {
     add_submenu_page( $parent_slug, __( 'Financial Accounts', 'bcs-screen-manager' ), __( 'Accounts', 'bcs-screen-manager' ), BSC_ADMIN_CAP, 'bsc-accounts', 'bsc_render_accounts_page' );
     add_submenu_page( $parent_slug, __( 'Staff & Crew', 'bcs-screen-manager' ), __( 'Users', 'bcs-screen-manager' ), BSC_ADMIN_CAP, 'bsc-users', 'bsc_render_users_page' );
     add_submenu_page( $parent_slug, __( 'Theater Settings', 'bcs-screen-manager' ), __( 'Settings', 'bcs-screen-manager' ), BSC_ADMIN_CAP, 'bsc-settings', 'bsc_render_settings_page' );
-    add_submenu_page( $parent_slug, __( 'Sign Out', 'bcs-screen-manager' ), '<span style="color:#ef4444;">🚪 ' . esc_html__( 'Logout', 'bcs-screen-manager' ) . '</span>', BSC_ADMIN_CAP, 'bsc-logout', 'bsc_handle_logout_screen' );
+    add_submenu_page( $parent_slug, __( 'Sign Out', 'bcs-screen-manager' ), '<span style="color:#ef4444;">🚪 ' . esc_html__( 'Sign Out', 'bcs-screen-manager' ) . '</span>', BSC_ADMIN_CAP, 'bsc-logout', 'bsc_handle_logout_screen' );
 }
 
 function bsc_handle_logout_screen() {
     $logout_url = wp_logout_url( home_url() );
     ?>
-    <script type="text/javascript">
-        window.location.href = <?php echo wp_json_encode( $logout_url ); ?>;
-    </script>
-    <div class="wrap" style="padding: 40px; color: #fff; font-family: sans-serif;">
+    <div class="wrap" style="padding: 40px; font-family: sans-serif;">
         <p><?php esc_html_e( 'Logging out of Big Screen Cinemas...', 'bcs-screen-manager' ); ?></p>
         <p><a href="<?php echo esc_url( $logout_url ); ?>" class="button button-primary"><?php esc_html_e( 'Click here if not redirected automatically', 'bcs-screen-manager' ); ?></a></p>
     </div>
     <?php
-}
-
-add_action( 'admin_enqueue_scripts', 'bsc_enqueue_admin_assets' );
-function bsc_enqueue_admin_assets( $hook ) {
-    if ( ! bsc_is_cinema_screen() ) {
-        return;
-    }
-    wp_enqueue_media();
-}
-
-// =============================================================================
-// CUSTOM ROUTING (/admin and /a/admin redirect to Movie Theater Dashboard)
-// =============================================================================
-add_action( 'init', 'bsc_handle_custom_admin_slug' );
-function bsc_handle_custom_admin_slug() {
-    $request_uri = untrailingslashit( strtok( $_SERVER['REQUEST_URI'] ?? '', '?' ) );
-
-    if ( in_array( $request_uri, array( '/admin', '/a/admin' ), true ) ) {
-        $target_url = admin_url( 'admin.php?page=bsc-dashboard' );
-        if ( is_user_logged_in() ) {
-            wp_safe_redirect( $target_url );
-        } else {
-            wp_safe_redirect( wp_login_url( $target_url ) );
-        }
-        exit;
-    }
 }

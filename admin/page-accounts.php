@@ -3,114 +3,180 @@
  * Accounts Module - Master Controller
  *
  * Path: admin/page-accounts.php
+ *
+ * @package BigScreenCinemas
  */
 
+// Exit if accessed directly.
 if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
-// 1. Process Delete & Form Submissions early on admin_init to prevent header errors
+// =============================================================================
+// 1. EARLY ACTION HANDLER (CSRF VERIFIED & SAFE REDIRECTS)
+// =============================================================================
 add_action( 'admin_init', 'bsc_accounts_handle_actions' );
+
 function bsc_accounts_handle_actions() {
-    if ( ! current_user_can( 'manage_options' ) ) {
+    $admin_cap = defined( 'BSC_ADMIN_CAP' ) ? BSC_ADMIN_CAP : 'manage_options';
+    if ( ! current_user_can( $admin_cap ) ) {
         return;
     }
 
-    global $wpdb;
-    $table_ledger = $wpdb->prefix . 'bsc_ledger';
-    $page         = isset( $_GET['page'] ) ? sanitize_key( $_GET['page'] ) : '';
-
+    $page = isset( $_GET['page'] ) ? sanitize_key( wp_unslash( $_GET['page'] ) ) : '';
     if ( 'bsc-accounts' !== $page ) {
         return;
     }
 
-    $subtab  = isset( $_GET['subtab'] ) ? sanitize_key( $_GET['subtab'] ) : '';
+    $subtab  = isset( $_GET['subtab'] ) ? sanitize_key( wp_unslash( $_GET['subtab'] ) ) : '';
     $item_id = isset( $_GET['id'] ) ? absint( $_GET['id'] ) : 0;
 
-    // Handle Delete
+    // CSRF-Protected Delete Action
     if ( 'delete' === $subtab && $item_id > 0 ) {
-        if ( file_exists( BSC_PLUGIN_PATH . 'admin/accounts/delete-ledger.php' ) ) {
-            require BSC_PLUGIN_PATH . 'admin/accounts/delete-ledger.php';
+        check_admin_referer( 'bsc_delete_ledger_' . $item_id, '_bsc_nonce' );
+
+        $delete_file = BSC_PLUGIN_PATH . 'admin/accounts/delete-ledger.php';
+        if ( file_exists( $delete_file ) ) {
+            require $delete_file;
             exit;
         }
     }
 
-    // Handle POST Submissions (Add Income / Expense / Edit Ledger Items)
-    if ( 'POST' === $_SERVER['REQUEST_METHOD'] && isset( $_POST['bsc_action'] ) ) {
-        // Handle via specific subview handlers or a general ledger processor if applicable
-        $bsc_action = sanitize_text_field( wp_unslash( $_POST['bsc_action'] ) );
-        if ( 'add_income' === $bsc_action || 'add_expense' === $bsc_action || 'edit_ledger' === $bsc_action ) {
-            // Can be modularized or handled via dedicated submission files
-            if ( file_exists( BSC_PLUGIN_PATH . 'admin/accounts/save-ledger.php' ) ) {
-                require BSC_PLUGIN_PATH . 'admin/accounts/save-ledger.php';
+    // CSRF-Protected Form Submissions (Add / Edit Ledger Items)
+    if ( 'POST' === ( $_SERVER['REQUEST_METHOD'] ?? '' ) && isset( $_POST['bsc_action'] ) ) {
+        check_admin_referer( 'bsc_ledger_form_action', '_bsc_nonce' );
+
+        $bsc_action = sanitize_key( wp_unslash( $_POST['bsc_action'] ) );
+        if ( in_array( $bsc_action, array( 'add_income', 'add_expense', 'edit_ledger' ), true ) ) {
+            $save_file = BSC_PLUGIN_PATH . 'admin/accounts/save-ledger.php';
+            if ( file_exists( $save_file ) ) {
+                require $save_file;
+                exit;
             }
         }
     }
 }
 
-// 2. Main Page Render Callback
+// =============================================================================
+// 2. MAIN PAGE RENDER CALLBACK
+// =============================================================================
 function bsc_render_accounts_page() {
-    if ( ! current_user_can( 'manage_options' ) ) {
-        wp_die( esc_html__( 'Unauthorized access.', 'bsc-cinema-manager' ) );
+    $admin_cap = defined( 'BSC_ADMIN_CAP' ) ? BSC_ADMIN_CAP : 'manage_options';
+    if ( ! current_user_can( $admin_cap ) ) {
+        wp_die( esc_html__( 'Unauthorized access.', 'bcs-screen-manager' ), 403 );
     }
 
     global $wpdb;
     $table_ledger = $wpdb->prefix . 'bsc_ledger';
 
-    $subtab          = isset( $_GET['subtab'] ) ? sanitize_key( $_GET['subtab'] ) : 'income';
-    $item_id         = isset( $_GET['id'] ) ? absint( $_GET['id'] ) : 0;
+    $subtab          = isset( $_GET['subtab'] ) ? sanitize_key( wp_unslash( $_GET['subtab'] ) ) : 'income';
     $currency_symbol = sanitize_text_field( get_option( 'bsc_currency_symbol', '৳' ) );
 
-    // Date Range Filtering Parameters
+    // Sanitize and normalize filter parameters
+    $filter_mode  = isset( $_GET['range_preset'] ) ? sanitize_key( wp_unslash( $_GET['range_preset'] ) ) : 'all';
     $filter_start = isset( $_GET['start_date'] ) ? sanitize_text_field( wp_unslash( $_GET['start_date'] ) ) : '';
     $filter_end   = isset( $_GET['end_date'] ) ? sanitize_text_field( wp_unslash( $_GET['end_date'] ) ) : '';
-    $filter_mode  = isset( $_GET['range_preset'] ) ? sanitize_key( $_GET['range_preset'] ) : 'all';
 
-    // Build WHERE clause based on active filter
-    $date_where = ' 1=1 ';
+    // Consolidated Aggregate Metrics in a Single Prepared Query (WPCS Compliant)
+    $cash_like        = '%' . $wpdb->esc_like( 'Cash' ) . '%';
+    $bkash_like       = '%' . $wpdb->esc_like( 'bKash' ) . '%';
+    $distributor_like = '%' . $wpdb->esc_like( 'Distributor' ) . '%';
+    $payroll_like     = '%' . $wpdb->esc_like( 'Payroll' ) . '%';
+    $utilities_like   = '%' . $wpdb->esc_like( 'Utilities' ) . '%';
+    $supplies_like    = '%' . $wpdb->esc_like( 'Supplies' ) . '%';
+
+    // Base SELECT arguments
+    $query_args = array( 
+        $cash_like, 
+        $bkash_like, 
+        $distributor_like, 
+        $payroll_like, 
+        $utilities_like, 
+        $supplies_like 
+    );
+
+    // Build index-friendly range constraints
+    $where_clauses = array( '1=1' );
+
     if ( ! empty( $filter_start ) && ! empty( $filter_end ) ) {
-        $date_where = $wpdb->prepare( ' DATE(transaction_date) BETWEEN %s AND %s ', $filter_start, $filter_end );
+        $where_clauses[] = 'transaction_date >= %s AND transaction_date <= %s';
+        $query_args[]    = $filter_start . ' 00:00:00';
+        $query_args[]    = $filter_end . ' 23:59:59';
     } elseif ( 'today' === $filter_mode ) {
-        $date_where = $wpdb->prepare( ' DATE(transaction_date) = %s ', current_time( 'Y-m-d' ) );
+        $today = current_time( 'Y-m-d' );
+        $where_clauses[] = 'transaction_date >= %s AND transaction_date <= %s';
+        $query_args[]    = $today . ' 00:00:00';
+        $query_args[]    = $today . ' 23:59:59';
     } elseif ( 'this_month' === $filter_mode ) {
-        $date_where = $wpdb->prepare( ' transaction_date LIKE %s ', current_time( 'Y-m' ) . '%' );
+        $where_clauses[] = 'transaction_date >= %s AND transaction_date <= %s';
+        $query_args[]    = current_time( 'Y-m-01 00:00:00' );
+        $query_args[]    = current_time( 'Y-m-t 23:59:59' );
     } elseif ( 'this_year' === $filter_mode ) {
-        $date_where = $wpdb->prepare( ' transaction_date LIKE %s ', current_time( 'Y' ) . '%' );
+        $where_clauses[] = 'transaction_date >= %s AND transaction_date <= %s';
+        $query_args[]    = current_time( 'Y-01-01 00:00:00' );
+        $query_args[]    = current_time( 'Y-12-31 23:59:59' );
     }
 
-    // Aggregate Key Performance Metrics under active filter
-    $total_income  = (float) $wpdb->get_var( "SELECT SUM(amount) FROM {$table_ledger} WHERE ({$date_where}) AND (txn_type = 'Income' OR txn_type IS NULL OR txn_type = '')" );
-    $total_expense = (float) $wpdb->get_var( "SELECT SUM(amount) FROM {$table_ledger} WHERE ({$date_where}) AND (txn_type = 'Expense')" );
-    $net_profit    = $total_income - $total_expense;
+    $where_sql = implode( ' AND ', $where_clauses );
 
-    // Payment Method Breakdown
-    $cash_income  = (float) $wpdb->get_var( "SELECT SUM(amount) FROM {$table_ledger} WHERE ({$date_where}) AND (txn_type = 'Income' OR txn_type IS NULL OR txn_type = '') AND (method = 'Cash' OR method LIKE '%Cash%')" );
-    $bkash_income = (float) $wpdb->get_var( "SELECT SUM(amount) FROM {$table_ledger} WHERE ({$date_where}) AND (txn_type = 'Income' OR txn_type IS NULL OR txn_type = '') AND (method = 'bKash' OR method LIKE '%bKash%' OR method = 'Online Gateway')" );
+    // Prepare the unified query
+    $metrics_query = $wpdb->prepare( "
+        SELECT 
+            COALESCE(SUM(CASE WHEN (txn_type = 'Income' OR txn_type = '' OR txn_type IS NULL) THEN amount ELSE 0 END), 0) AS total_income,
+            COALESCE(SUM(CASE WHEN txn_type = 'Expense' THEN amount ELSE 0 END), 0) AS total_expense,
+            COALESCE(SUM(CASE WHEN (txn_type = 'Income' OR txn_type = '' OR txn_type IS NULL) AND (method LIKE %s) THEN amount ELSE 0 END), 0) AS cash_income,
+            COALESCE(SUM(CASE WHEN (txn_type = 'Income' OR txn_type = '' OR txn_type IS NULL) AND (method LIKE %s OR method = 'Online Gateway') THEN amount ELSE 0 END), 0) AS bkash_income,
+            COALESCE(SUM(CASE WHEN txn_type = 'Expense' AND particulars LIKE %s THEN amount ELSE 0 END), 0) AS distributor_exp,
+            COALESCE(SUM(CASE WHEN txn_type = 'Expense' AND particulars LIKE %s THEN amount ELSE 0 END), 0) AS payroll_exp,
+            COALESCE(SUM(CASE WHEN txn_type = 'Expense' AND particulars LIKE %s THEN amount ELSE 0 END), 0) AS utilities_exp,
+            COALESCE(SUM(CASE WHEN txn_type = 'Expense' AND particulars LIKE %s THEN amount ELSE 0 END), 0) AS supplies_exp
+        FROM {$table_ledger}
+        WHERE {$where_sql}
+    ", $query_args );
 
-    // Category-wise Expense Breakdown
-    $distributor_exp = (float) $wpdb->get_var( "SELECT SUM(amount) FROM {$table_ledger} WHERE ({$date_where}) AND txn_type = 'Expense' AND particulars LIKE '%Distributor%'" );
-    $payroll_exp     = (float) $wpdb->get_var( "SELECT SUM(amount) FROM {$table_ledger} WHERE ({$date_where}) AND txn_type = 'Expense' AND particulars LIKE '%Payroll%'" );
-    $utilities_exp   = (float) $wpdb->get_var( "SELECT SUM(amount) FROM {$table_ledger} WHERE ({$date_where}) AND txn_type = 'Expense' AND particulars LIKE '%Utilities%'" );
-    $supplies_exp    = (float) $wpdb->get_var( "SELECT SUM(amount) FROM {$table_ledger} WHERE ({$date_where}) AND txn_type = 'Expense' AND particulars LIKE '%Supplies%'" );
+    $metrics = $wpdb->get_row( $metrics_query );
+
+    $total_income    = (float) ( $metrics->total_income ?? 0 );
+    $total_expense   = (float) ( $metrics->total_expense ?? 0 );
+    $net_profit      = $total_income - $total_expense;
+    $cash_income     = (float) ( $metrics->cash_income ?? 0 );
+    $bkash_income    = (float) ( $metrics->bkash_income ?? 0 );
+    $distributor_exp = (float) ( $metrics->distributor_exp ?? 0 );
+    $payroll_exp     = (float) ( $metrics->payroll_exp ?? 0 );
+    $utilities_exp   = (float) ( $metrics->utilities_exp ?? 0 );
+    $supplies_exp    = (float) ( $metrics->supplies_exp ?? 0 );
     $other_exp       = max( 0, $total_expense - ( $distributor_exp + $payroll_exp + $utilities_exp + $supplies_exp ) );
 
     // Open Layout Shell
-    bsc_render_page_shell_open( 'bsc-accounts' );
+    if ( function_exists( 'bsc_render_page_shell_open' ) ) {
+        bsc_render_page_shell_open( 'bsc-accounts' );
+    }
 
     // Render Subtabs & Navigation Alerts Bar
-    if ( file_exists( BSC_PLUGIN_PATH . 'admin/accounts/tabs-accounts.php' ) ) {
-        require BSC_PLUGIN_PATH . 'admin/accounts/tabs-accounts.php';
+    $tabs_file = BSC_PLUGIN_PATH . 'admin/accounts/tabs-accounts.php';
+    if ( file_exists( $tabs_file ) ) {
+        require $tabs_file;
     }
 
     // Route Subviews Safely
+    $view_file = BSC_PLUGIN_PATH . 'admin/accounts/income-accounts.php';
     if ( 'expense' === $subtab ) {
-        require BSC_PLUGIN_PATH . 'admin/accounts/expense-accounts.php';
+        $view_file = BSC_PLUGIN_PATH . 'admin/accounts/expense-accounts.php';
     } elseif ( 'report' === $subtab ) {
-        require BSC_PLUGIN_PATH . 'admin/accounts/report-accounts.php';
+        $view_file = BSC_PLUGIN_PATH . 'admin/accounts/report-accounts.php';
+    }
+
+    if ( file_exists( $view_file ) ) {
+        require $view_file;
     } else {
-        require BSC_PLUGIN_PATH . 'admin/accounts/income-accounts.php';
+        printf(
+            '<div class="notice notice-error"><p>%s</p></div>',
+            esc_html__( 'The requested view file could not be found.', 'bcs-screen-manager' )
+        );
     }
 
     // Close Layout Shell
-    bsc_render_page_shell_close();
+    if ( function_exists( 'bsc_render_page_shell_close' ) ) {
+        bsc_render_page_shell_close();
+    }
 }
