@@ -4,43 +4,39 @@
  *
  * Path: admin/customers/delete-customer.php
  *
- * @package BigScreenCinemas
+ * @package NahianMovieBookingPlugin
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
-    exit;
+	exit;
 }
 
-$admin_cap = defined( 'BSC_ADMIN_CAP' ) ? BSC_ADMIN_CAP : 'manage_options';
+$admin_cap = defined( 'NMBP_ADMIN_CAP' ) ? NMBP_ADMIN_CAP : 'manage_options';
 if ( ! current_user_can( $admin_cap ) ) {
-    wp_die( esc_html__( 'Unauthorized access.', 'bcs-screen-manager' ), 403 );
+	wp_die( esc_html__( 'Unauthorized access.', 'nahian-movie-booking-plugin' ), 403 );
 }
 
 global $wpdb;
-$table_customers = $wpdb->prefix . 'bsc_customers';
+$table_customers = $wpdb->prefix . 'nmbp_customers';
 $customer_id     = isset( $_GET['id'] ) ? absint( $_GET['id'] ) : 0;
 
 if ( $customer_id <= 0 ) {
-    wp_die(
-        esc_html__( 'Invalid customer identifier.', 'bcs-screen-manager' ),
-        esc_html__( 'Error', 'bcs-screen-manager' ),
-        array( 'response' => 400 )
-    );
+	wp_die(
+		esc_html__( 'Invalid customer identifier.', 'nahian-movie-booking-plugin' ),
+		esc_html__( 'Error', 'nahian-movie-booking-plugin' ),
+		array( 'response' => 400 )
+	);
 }
 
-// Strict nonce verification matching master controller and directory link
-check_admin_referer( 'bsc_delete_customer_' . $customer_id, '_bsc_nonce' );
+// Strict nonce verification matching master controller and directory link.
+check_admin_referer( 'nmbp_delete_customer_' . $customer_id, '_nmbp_nonce' );
 
-$deleted = $wpdb->delete(
-    $table_customers,
-    array( 'id' => $customer_id ),
-    array( '%d' )
+$deleted      = $wpdb->delete(
+	$table_customers,
+	array( 'id' => $customer_id ),
+	array( '%d' )
 );
+$redirect_arg = ( false !== $deleted && 0 !== $deleted ) ? 'customer_deleted=true' : 'customer_error=db_failed';
 
-if ( false !== $deleted ) {
-    wp_safe_redirect( admin_url( 'admin.php?page=bsc-customers&subtab=all&customer_deleted=true' ) );
-    exit;
-} else {
-    wp_safe_redirect( admin_url( 'admin.php?page=bsc-customers&subtab=all&customer_error=db_failed' ) );
-    exit;
-}
+wp_safe_redirect( admin_url( 'admin.php?page=nmbp-customers&subtab=all&' . $redirect_arg ) );
+exit;

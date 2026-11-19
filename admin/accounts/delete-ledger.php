@@ -4,57 +4,57 @@
  *
  * Path: admin/accounts/delete-ledger.php
  *
- * @package BigScreenCinemas
+ * @package NahianMovieBookingPlugin
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
-    exit;
+	exit;
 }
 
-$admin_cap = defined( 'BSC_ADMIN_CAP' ) ? BSC_ADMIN_CAP : 'manage_options';
+$admin_cap = defined( 'NMBP_ADMIN_CAP' ) ? NMBP_ADMIN_CAP : 'manage_options';
 if ( ! current_user_can( $admin_cap ) ) {
-    wp_die( esc_html__( 'Unauthorized access.', 'bcs-screen-manager' ), 403 );
+	wp_die( esc_html__( 'Unauthorized access.', 'nahian-movie-booking-plugin' ), 403 );
 }
 
 global $wpdb;
-$table_ledger = isset( $table_ledger ) ? $table_ledger : $wpdb->prefix . 'bsc_ledger';
+$table_ledger = isset( $table_ledger ) ? $table_ledger : $wpdb->prefix . 'nmbp_ledger';
 $item_id      = isset( $_GET['id'] ) ? absint( $_GET['id'] ) : 0;
 
 if ( $item_id <= 0 ) {
-    wp_die(
-        esc_html__( 'Invalid ledger identifier.', 'bcs-screen-manager' ),
-        esc_html__( 'Error', 'bcs-screen-manager' ),
-        array( 'response' => 400 )
-    );
+	wp_die(
+		esc_html__( 'Invalid ledger identifier.', 'nahian-movie-booking-plugin' ),
+		esc_html__( 'Error', 'nahian-movie-booking-plugin' ),
+		array( 'response' => 400 )
+	);
 }
 
-// Verify strict nonce matching the master controller and view links
-check_admin_referer( 'bsc_delete_ledger_' . $item_id, '_bsc_nonce' );
+// Verify strict nonce matching the master controller and view links.
+check_admin_referer( 'nmbp_delete_ledger_' . $item_id, '_nmbp_nonce' );
 
-// Determine transaction type before deletion for context-aware redirect
+// Determine transaction type before deletion for context-aware redirect.
 $txn_type = $wpdb->get_var(
-    $wpdb->prepare(
-        "SELECT txn_type FROM {$table_ledger} WHERE id = %d",
-        $item_id
-    )
+	$wpdb->prepare(
+		"SELECT txn_type FROM {$table_ledger} WHERE id = %d",
+		$item_id
+	)
 );
 
-// Fallback return subtab based on transaction type or query parameter
+// Fallback return subtab based on transaction type or query parameter.
 $return_subtab = isset( $_GET['return_subtab'] ) ? sanitize_key( wp_unslash( $_GET['return_subtab'] ) ) : '';
 if ( empty( $return_subtab ) ) {
-    $return_subtab = ( 'Income' === $txn_type ) ? 'income' : 'expense';
+	$return_subtab = ( 'Income' === $txn_type ) ? 'income' : 'expense';
 }
 
 $deleted = $wpdb->delete(
-    $table_ledger,
-    array( 'id' => $item_id ),
-    array( '%d' )
+	$table_ledger,
+	array( 'id' => $item_id ),
+	array( '%d' )
 );
 
-if ( false !== $deleted ) {
-    wp_safe_redirect( admin_url( 'admin.php?page=bsc-accounts&subtab=' . $return_subtab . '&deleted=1' ) );
-    exit;
+if ( false !== $deleted && 0 !== $deleted ) {
+	wp_safe_redirect( admin_url( 'admin.php?page=nmbp-accounts&subtab=' . $return_subtab . '&deleted=1' ) );
+	exit;
 } else {
-    wp_safe_redirect( admin_url( 'admin.php?page=bsc-accounts&subtab=' . $return_subtab . '&error=db_failed' ) );
-    exit;
+	wp_safe_redirect( admin_url( 'admin.php?page=nmbp-accounts&subtab=' . $return_subtab . '&error=db_failed' ) );
+	exit;
 }
